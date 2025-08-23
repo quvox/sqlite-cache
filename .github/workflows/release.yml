@@ -1,0 +1,197 @@
+name: Release Build
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  packages: read
+
+env:
+  GO_VERSION: '1.21'
+
+jobs:
+  run-tests:
+    name: Run Python Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib libc6-dev
+
+      - name: Download Go modules
+        run: make deps
+
+      - name: Get version from Makefile
+        id: version
+        run: |
+          VERSION=$(make -s -f Makefile print-version || echo "0.1.0")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Build library for testing
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: make build-lib VERSION=$VERSION
+
+      - name: Run Python tests
+        run: |
+          # Update test to use the correct library path
+          sed -i "s/sqcachelib\.0\.1\.0\.so/sqcachelib.${{ steps.version.outputs.version }}.so/g" examples/test_cache_lru.py
+          python3 examples/test_cache_lru.py
+
+  build-native-mac:
+    name: Build Native (macOS)
+    runs-on: macos-latest
+    needs: run-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download Go modules
+        run: make deps
+
+      - name: Get version from Makefile
+        id: version
+        run: |
+          VERSION=$(make -s -f Makefile print-version || echo "0.1.0")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Build native macOS
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          make build-lib-mac VERSION=$VERSION
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqcache-mac-native-${{ steps.version.outputs.version }}
+          path: build/mac/
+          retention-days: 30
+
+  build-native-linux:
+    name: Build Native (Linux)
+    runs-on: ubuntu-latest
+    needs: run-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib libc6-dev
+
+      - name: Download Go modules
+        run: make deps
+
+      - name: Get version from Makefile
+        id: version
+        run: |
+          VERSION=$(make -s -f Makefile print-version || echo "0.1.0")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Build native Linux
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Build command-line binary
+          make build VERSION=$VERSION
+          
+          # Build shared library
+          make build-lib VERSION=$VERSION
+          
+          # Create Linux directory and copy files
+          mkdir -p build/linux
+          cp build/sqcache build/linux/sqcache
+          cp build/sqcachelib.$VERSION.so build/linux/sqcachelib.$VERSION.so
+          
+          # Copy header file if it exists
+          if [ -f "build/sqcachelib.$VERSION.h" ]; then
+            cp build/sqcachelib.$VERSION.h build/linux/sqcachelib.$VERSION.h
+          fi
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@de65e23aa2b7e23d713bb51fbfcb6d502f8667d8
+        with:
+          name: sqcache-linux-native-${{ steps.version.outputs.version }}
+          path: build/linux/
+          retention-days: 30
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build-native-mac, build-native-linux]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from Makefile
+        id: version
+        run: |
+          VERSION=$(make -s -f Makefile print-version || echo "0.1.0")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@de96f4613b77ec03b5cf633e7c350c32bd3c5660
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          
+          # Package macOS assets
+          if [ -d "sqcache-mac-native-${{ steps.version.outputs.version }}" ]; then
+            cd "sqcache-mac-native-${{ steps.version.outputs.version }}"
+            tar -czf "../release-assets/sqcache-mac-${{ steps.version.outputs.version }}.tar.gz" *
+            cd ..
+          fi
+          
+          # Package Linux assets
+          if [ -d "sqcache-linux-native-${{ steps.version.outputs.version }}" ]; then
+            cd "sqcache-linux-native-${{ steps.version.outputs.version }}"
+            tar -czf "../release-assets/sqcache-linux-${{ steps.version.outputs.version }}.tar.gz" *
+            cd ..
+          fi
+          
+          ls -la release-assets/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@126b1e70939461ae1dc0252ce412cabf99778520
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release-assets/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
