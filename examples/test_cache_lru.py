@@ -19,8 +19,12 @@ from typing import Optional, Any, Dict
 class SqliteCacheLibrary:
     """Python client for sqcache library using ctypes."""
     
-    def __init__(self, library_path: str = "./build/sqcachelib.0.2.0.so"):
+    def __init__(self, library_path: str = None):
         """Initialize the client with the path to the sqcache library."""
+        if library_path is None:
+            # Get version from environment variable, default to 0.2.0
+            version = os.environ.get('VERSION', '0.2.0')
+            library_path = f"./build/sqcachelib.{version}.so"
         self.library_path = library_path
         self.lib = None
         self._load_library()

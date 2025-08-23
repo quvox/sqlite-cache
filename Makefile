@@ -66,6 +66,19 @@ build-lib-linux: deps fmt vet
 	@echo "Consider building on a Linux machine or using Docker for Linux builds"
 	cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/linux/$(LIB_NAME).$(VERSION).so .
 
+# Run Python tests
+test: build-lib
+	@echo "Running Python integration tests..."
+	@echo "Testing all Python scripts in examples/ with VERSION=$(VERSION)"
+	@for script in examples/*.py; do \
+		if [ -f "$$script" ]; then \
+			echo "Running $$script..."; \
+			VERSION=$(VERSION) python3 "$$script" || exit 1; \
+			echo "✓ $$script passed"; \
+		fi; \
+	done
+	@echo "All Python tests passed!"
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
@@ -107,7 +120,6 @@ help:
 	@echo "  build-static     - Build binary with static linking"
 	@echo "  build-linux      - Cross-compile binary for Linux"
 	@echo "  test             - Run tests"
-	@echo "  test-coverage    - Run tests with coverage"
 	@echo "  clean            - Clean build artifacts"
 	@echo "  run              - Build and run the binary"
 	@echo "  install          - Install binary to GOPATH/bin"

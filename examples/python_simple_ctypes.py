@@ -16,9 +16,14 @@ from typing import Optional
 _lib = None
 
 
-def load_library(library_path: str = "./build/sqcachelib.0.2.0.so"):
+def load_library(library_path: str = None):
     """Load the shared library and configure function signatures."""
     global _lib
+    
+    if library_path is None:
+        # Get version from environment variable, default to 0.2.0
+        version = os.environ.get('VERSION', '0.2.0')
+        library_path = f"./build/sqcachelib.{version}.so"
     
     if not os.path.exists(library_path):
         raise FileNotFoundError(f"Library not found: {library_path}")
@@ -121,8 +126,9 @@ def set(table: str, tenant_id: str, freshness: str, bind: str, content: bytes) -
 def main():
     """Example usage of the simple cache functions."""
     
-    # Try different library paths
-    library_paths = ["./build/sqcachelib.0.2.0.so", "./build/mac/sqcachelib.0.2.0.so"]
+    # Try different library paths with version from environment
+    version = os.environ.get('VERSION', '0.2.0')
+    library_paths = [f"./build/sqcachelib.{version}.so", f"./build/mac/sqcachelib.{version}.so"]
     
     library_loaded = False
     for lib_path in library_paths:

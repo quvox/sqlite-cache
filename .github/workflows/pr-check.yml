@@ -84,9 +84,14 @@ jobs:
     - name: Download Go modules
       run: make deps
     
-    - name: Build library
-      run: make build-lib
+    - name: Get version from Makefile
+      id: version
+      run: |
+        VERSION=$(make -s print-version)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
     
     - name: Run Python tests
-      run: |
-        python3 examples/test_cache_lru.py
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: make test

@@ -16,8 +16,12 @@ import os
 class SqliteCacheLibrary:
     """Python client for sqcache library using ctypes."""
     
-    def __init__(self, library_path: str = "./build/sqcachelib.0.2.0.so"):
+    def __init__(self, library_path: str = None):
         """Initialize the client with the path to the sqcache library."""
+        if library_path is None:
+            # Get version from environment variable, default to 0.2.0
+            version = os.environ.get('VERSION', '0.2.0')
+            library_path = f"./build/sqcachelib.{version}.so"
         self.library_path = library_path
         self.lib = None
         self._load_library()
@@ -158,8 +162,9 @@ class SqliteCacheLibrary:
 def main():
     """Example usage of the SqliteCacheLibrary."""
     
-    # Try shared library paths
-    library_paths = ["./build/sqcachelib.0.2.0.so", "./build/mac/sqcachelib.0.2.0.so"]
+    # Try shared library paths with version from environment
+    version = os.environ.get('VERSION', '0.2.0')
+    library_paths = [f"./build/sqcachelib.{version}.so", f"./build/mac/sqcachelib.{version}.so"]
     
     cache = None
     for lib_path in library_paths:
