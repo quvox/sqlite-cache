@@ -153,6 +153,14 @@ jobs:
         run: |
           VERSION=$(make -s -f Makefile print-version || echo "0.1.0")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+      - name: Check if release already exists
+        run: |
+          if git tag | grep -q "^v${{ steps.version.outputs.version }}$"; then
+            echo "Error: Tag v${{ steps.version.outputs.version }} already exists"
+            echo "Please update the version in the Makefile before creating a release"
+            exit 1
+          fi
 
       - name: Download all artifacts
         uses: actions/download-artifact@de96f4613b77ec03b5cf633e7c350c32bd3c5660
@@ -180,8 +188,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@126b1e70939461ae1dc0252ce412cabf99778520
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ steps.version.outputs.version }}
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
           generate_release_notes: true
