@@ -16,14 +16,14 @@ type InitRequest struct {
 type GetRequest struct {
 	Table     string `json:"table"`
 	TenantID  string `json:"tenant_id"`
-	Freshness int64  `json:"freshness"`
+	Freshness string `json:"freshness"`
 	Bind      string `json:"bind"`
 }
 
 type SetRequest struct {
 	Table     string `json:"table"`
 	TenantID  string `json:"tenant_id"`
-	Freshness int64  `json:"freshness"`
+	Freshness string `json:"freshness"`
 	Bind      string `json:"bind"`
 	Content   []byte `json:"content"`
 }
@@ -129,7 +129,7 @@ func InitParams(baseDir string, maxSize int, cap float64) string {
 	return toJSON(Response{Success: true})
 }
 
-func GetParams(table, tenantId string, freshness int64, bind string) string {
+func GetParams(table, tenantId string, freshness string, bind string) string {
 	if globalCacheManager == nil {
 		return toJSON(Response{Success: false, Error: "cache not initialized"})
 	}
@@ -142,7 +142,7 @@ func GetParams(table, tenantId string, freshness int64, bind string) string {
 	return toJSON(Response{Success: true, Data: content})
 }
 
-func SetParams(table, tenantId string, freshness int64, bind string, content []byte) string {
+func SetParams(table, tenantId string, freshness string, bind string, content []byte) string {
 	if globalCacheManager == nil {
 		return toJSON(Response{Success: false, Error: "cache not initialized"})
 	}

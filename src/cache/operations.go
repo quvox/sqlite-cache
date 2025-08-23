@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func (cm *CacheManager) Get(table, tenantID string, freshness int64, bind string) ([]byte, error) {
+func (cm *CacheManager) Get(table, tenantID string, freshness string, bind string) ([]byte, error) {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 
@@ -32,7 +32,7 @@ func (cm *CacheManager) Get(table, tenantID string, freshness int64, bind string
 	now := time.Now().Unix()
 	var content []byte
 
-	query := "UPDATE cache_entries SET last_accessed = ? WHERE key = ? RETURNING content"
+	query := "UPDATE cache SET last_accessed = ? WHERE bind = ? RETURNING content"
 	err = db.QueryRow(query, now, bind).Scan(&content)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -44,7 +44,7 @@ func (cm *CacheManager) Get(table, tenantID string, freshness int64, bind string
 	return content, nil
 }
 
-func (cm *CacheManager) Set(table, tenantID string, freshness int64, bind string, content []byte) error {
+func (cm *CacheManager) Set(table, tenantID string, freshness string, bind string, content []byte) error {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 
@@ -71,17 +71,12 @@ func (cm *CacheManager) Set(table, tenantID string, freshness int64, bind string
 
 	// エントリを挿入または更新
 	query := `
-	INSERT OR REPLACE INTO cache_entries (key, content, last_accessed, created_at)
-	VALUES (?, ?, ?, ?)
+	INSERT OR REPLACE INTO cache (bind, content, last_accessed)
+	VALUES (?, ?, ?)
 	`
-	_, err = db.Exec(query, bind, content, now, now)
+	_, err = db.Exec(query, bind, content, now)
 	if err != nil {
 		return fmt.Errorf("failed to insert cache entry: %w", err)
-	}
-
-	// 挿入後の最終サイズチェック
-	if err := cm.enforceSize(db); err != nil {
-		return fmt.Errorf("failed to enforce size limits after insert: %w", err)
 	}
 
 	return nil
@@ -130,7 +125,7 @@ func (cm *CacheManager) enforceSize(db *sql.DB) error {
 func (cm *CacheManager) lruCleanup(db *sql.DB) error {
 	// 現在のレコード数を取得
 	var totalCount int
-	err := db.QueryRow("SELECT COUNT(*) FROM cache_entries").Scan(&totalCount)
+	err := db.QueryRow("SELECT COUNT(*) FROM cache").Scan(&totalCount)
 	if err != nil {
 		return err
 	}
@@ -144,9 +139,9 @@ func (cm *CacheManager) lruCleanup(db *sql.DB) error {
 
 	// 古いレコードを削除
 	query := `
-	DELETE FROM cache_entries 
-	WHERE key IN (
-		SELECT key FROM cache_entries 
+	DELETE FROM cache 
+	WHERE id IN (
+		SELECT id FROM cache 
 		ORDER BY last_accessed ASC 
 		LIMIT ?
 	)

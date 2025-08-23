@@ -3,7 +3,7 @@
 SQLite Cache LRU Test
 
 This test implements the test scenario specified in docs/DESIGN.md:
-- Initialize with max_size=10MB, cap=0.6
+- Initialize with max_size=10MB, cap=0.5
 - Create ~100kB content records with bind values 1-200
 - Test cache hits/misses and LRU behavior
 """
@@ -19,7 +19,7 @@ from typing import Optional, Any, Dict
 class SqliteCacheLibrary:
     """Python client for sqcache library using ctypes."""
     
-    def __init__(self, library_path: str = "./build/sqcachelib.0.1.0.so"):
+    def __init__(self, library_path: str = "./build/sqcachelib.0.2.0.so"):
         """Initialize the client with the path to the sqcache library."""
         self.library_path = library_path
         self.lib = None
@@ -37,12 +37,12 @@ class SqliteCacheLibrary:
         self.lib.Init.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_double]
         self.lib.Init.restype = ctypes.c_char_p
         
-        # Get(char* table, char* tenantId, long long freshness, char* bind) -> char*
-        self.lib.Get.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_longlong, ctypes.c_char_p]
+        # Get(char* table, char* tenantId, char* freshness, char* bind) -> char*
+        self.lib.Get.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
         self.lib.Get.restype = ctypes.c_char_p
         
-        # Set(char* table, char* tenantId, long long freshness, char* bind, char* content, int contentLen) -> char*
-        self.lib.Set.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_longlong, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+        # Set(char* table, char* tenantId, char* freshness, char* bind, char* content, int contentLen) -> char*
+        self.lib.Set.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
         self.lib.Set.restype = ctypes.c_char_p
         
         # Delete(char* table) -> char*
@@ -82,16 +82,17 @@ class SqliteCacheLibrary:
         
         return True
     
-    def get(self, table: str, tenant_id: str, freshness: int, bind: str) -> Optional[bytes]:
+    def get(self, table: str, tenant_id: str, freshness: str, bind: str) -> Optional[bytes]:
         """Get data from cache."""
         if self.lib is None:
             raise RuntimeError("Library not loaded")
         
         table_c = table.encode('utf-8')
         tenant_id_c = tenant_id.encode('utf-8')
+        freshness_c = freshness.encode('utf-8')
         bind_c = bind.encode('utf-8')
         
-        result_ptr = self.lib.Get(table_c, tenant_id_c, freshness, bind_c)
+        result_ptr = self.lib.Get(table_c, tenant_id_c, freshness_c, bind_c)
         response = self._handle_response(result_ptr)
         
         if response.get("success", False):
@@ -107,20 +108,21 @@ class SqliteCacheLibrary:
         
         raise RuntimeError(f"Failed to get cache: {response.get('error', 'unknown error')}")
     
-    def set(self, table: str, tenant_id: str, freshness: int, bind: str, content: bytes) -> bool:
+    def set(self, table: str, tenant_id: str, freshness: str, bind: str, content: bytes) -> bool:
         """Set data in cache."""
         if self.lib is None:
             raise RuntimeError("Library not loaded")
         
         table_c = table.encode('utf-8')
         tenant_id_c = tenant_id.encode('utf-8')
+        freshness_c = freshness.encode('utf-8')
         bind_c = bind.encode('utf-8')
         
         # Content is passed as raw bytes with length
         content_ptr = ctypes.c_char_p(content)
         content_len = len(content)
         
-        result_ptr = self.lib.Set(table_c, tenant_id_c, freshness, bind_c, content_ptr, content_len)
+        result_ptr = self.lib.Set(table_c, tenant_id_c, freshness_c, bind_c, content_ptr, content_len)
         response = self._handle_response(result_ptr)
         
         if not response.get("success", False):
@@ -178,11 +180,11 @@ def test_cache_lru():
     print("=== SQLite Cache LRU Test ===")
     
     # Test parameters  
-    MAX_SIZE_MB = 10  # DESIGN.md仕様に戻す
-    CAP = 0.5  # cap=0.5に修正
+    MAX_SIZE_MB = 10  # int as per DESIGN.md
+    CAP = 0.5  # cap=0.5 as per DESIGN.md
     TABLE = "test_table"
     TENANT_ID = "tenant_001"
-    FRESHNESS = int(time.time())
+    FRESHNESS = "fresh1"  # string as per DESIGN.md
     
     # Initialize cache
     try:
@@ -214,7 +216,7 @@ def test_cache_lru():
         print("\n--- Step 2: Testing cache hits for records 1-90 ---")
         test_binds = random.sample(range(1, 91), 30)
         hit_count = 0
-        
+
         for bind_value in test_binds:
             bind_str = str(bind_value)
             result = cache.get(TABLE, TENANT_ID, FRESHNESS, bind_str)
@@ -288,6 +290,49 @@ def test_cache_lru():
             print("✓ All records 131-200 found in cache")
         else:
             print(f"✗ Expected 30 hits, got {hit_count}")
+            return False
+        
+        # Step 6: Test freshness="fresh2" and confirm fresh1 cache deletion
+        print("\n--- Step 6: Testing freshness='fresh2' and cache cleanup ---")
+        NEW_FRESHNESS = "fresh2"  # Different freshness as string
+        
+        # Try to get with new freshness (should fail and trigger cleanup)
+        result = cache.get(TABLE, TENANT_ID, NEW_FRESHNESS, "1")
+        if result is None:
+            print("✓ Cache miss for freshness='fresh2' as expected")
+        else:
+            print("✗ Unexpected cache hit for freshness='fresh2'")
+            return False
+
+        # Register records 1-10 with new freshness
+        print("\n--- Step 7: Registering records 1-10 with freshness='fresh2' ---")
+        for i in range(1, 11):
+            bind_str = str(i)
+            content = generate_content(i)
+            cache.set(TABLE, TENANT_ID, NEW_FRESHNESS, bind_str, content)
+        print("✓ Registered records 1-10 with freshness='fresh2'")
+
+        # Test cache hits for records 1-10 with new freshness
+        print("\n--- Step 8: Testing cache hits for records 1-10 with freshness='fresh2' ---")
+        hit_count = 0
+        for bind_value in range(1, 11):
+            bind_str = str(bind_value)
+            result = cache.get(TABLE, TENANT_ID, NEW_FRESHNESS, bind_str)
+            if result is not None:
+                # Verify content starts with bind value
+                content_str = result.decode('utf-8')
+                if content_str.startswith(f"bind_value={bind_value}|"):
+                    hit_count += 1
+                else:
+                    print(f"  ✗ Content mismatch for bind {bind_value}")
+            else:
+                print(f"  ✗ Cache miss for bind {bind_value}")
+        
+        print(f"  Cache hits: {hit_count}/10")
+        if hit_count == 10:
+            print("✓ All records 1-10 found in cache with freshness='fresh2'")
+        else:
+            print(f"✗ Expected 10 hits, got {hit_count}")
             return False
         
         # Cleanup

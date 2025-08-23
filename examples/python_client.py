@@ -83,7 +83,7 @@ class SqliteCacheClient:
         
         return True
     
-    def get(self, table: str, tenant_id: str, freshness: int, bind: str) -> Optional[bytes]:
+    def get(self, table: str, tenant_id: str, freshness: str, bind: str) -> Optional[bytes]:
         """Get data from cache."""
         request = {
             "table": table,
@@ -106,7 +106,7 @@ class SqliteCacheClient:
         
         raise RuntimeError(f"Failed to get cache: {response.get('error', 'unknown error')}")
     
-    def set(self, table: str, tenant_id: str, freshness: int, bind: str, content: bytes) -> bool:
+    def set(self, table: str, tenant_id: str, freshness: str, bind: str, content: bytes) -> bool:
         """Set data in cache."""
         import base64
         
@@ -165,7 +165,7 @@ def main():
         # Test data
         table = "users"
         tenant_id = "tenant_001"
-        freshness = int(time.time())
+        freshness = "fresh1"  # Use string as per DESIGN.md
         bind_key = "user_123"
         test_data = b'{"name": "John Doe", "email": "john@example.com"}'
         
