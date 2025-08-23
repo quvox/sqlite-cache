@@ -17,7 +17,32 @@ AWS Lambdaのようなサーバレス環境での並列実行を想定してお�
 
 ## 使い方
 
+### コマンドライン
+
+使い方は、ヘルプに記載されている。
+```bash
+sqcache help
+```
+
+初期化、登録、検索は、すべて**JSON形式**でsqcacheの標準入力に与える。
+```bash
+echo 'INIT {"base_dir": "./cache", "max_size": 100, "cap": 0.8}' | sqcache
+echo {"table": "users", "tenant_id": "tenant1", "freshness": 1234567890, "bind": "key1", "content": "data" | sqcache
+echo {"table": "users", "tenant_id": "tenant1", "freshness": 1234567890, "bind": "key1"} | sqcache
+```
 
 
+
+#### ライブラリ
+
+#### Pythonで利用する
+
+sqcachelib.[バージョン].soをctypesで呼び出すサンプルコードは、example/python_ctypes_client.pyに示す。
+
+
+
+### go mod
+
+Goのモジュール化は未対応
 
 

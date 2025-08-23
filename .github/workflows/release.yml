@@ -44,16 +44,10 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-      - name: Build library for testing
+      - name: Run Python tests
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: make build-lib VERSION=$VERSION
-
-      - name: Run Python tests
-        run: |
-          # Update test to use the correct library path
-          sed -i "s/sqcachelib\.0\.1\.0\.so/sqcachelib.${{ steps.version.outputs.version }}.so/g" examples/test_cache_lru.py
-          python3 examples/test_cache_lru.py
+        run: make test
 
   build-native-mac:
     name: Build Native (macOS)

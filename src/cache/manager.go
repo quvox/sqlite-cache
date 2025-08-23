@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -40,15 +39,15 @@ func (cm *CacheManager) Init(baseDir string, maxSize int, cap float64) error {
 	return nil
 }
 
-func (cm *CacheManager) getDBPath(table, tenantID string, freshness int64) string {
-	return filepath.Join(cm.config.BaseDir, table, tenantID, fmt.Sprintf("%d.db", freshness))
+func (cm *CacheManager) getDBPath(table, tenantID string, freshness string) string {
+	return filepath.Join(cm.config.BaseDir, table, tenantID, fmt.Sprintf("%s.db", freshness))
 }
 
-func (cm *CacheManager) getDBKey(table, tenantID string, freshness int64) string {
-	return fmt.Sprintf("%s:%s:%d", table, tenantID, freshness)
+func (cm *CacheManager) getDBKey(table, tenantID string, freshness string) string {
+	return fmt.Sprintf("%s:%s:%s", table, tenantID, freshness)
 }
 
-func (cm *CacheManager) openDB(table, tenantID string, freshness int64) (*sql.DB, error) {
+func (cm *CacheManager) openDB(table, tenantID string, freshness string) (*sql.DB, error) {
 	dbKey := cm.getDBKey(table, tenantID, freshness)
 
 	if db, exists := cm.dbs[dbKey]; exists {
@@ -84,18 +83,9 @@ func (cm *CacheManager) openDB(table, tenantID string, freshness int64) (*sql.DB
 }
 
 func (cm *CacheManager) configurePragmas(db *sql.DB) error {
-	// ページサイズは4KB
-	const pageSize = 4096
-
-	// 最大ファイルサイズからページ数を計算（安全マージンを追加）
-	maxSizeBytes := int64(cm.config.MaxSize) * 1024 * 1024 // MB to bytes
-	maxPageCount := (maxSizeBytes * 2) / pageSize          // 2倍のマージンを設定
-
 	pragmas := []string{
 		"PRAGMA journal_mode = OFF",
 		"PRAGMA synchronous = NORMAL",
-		fmt.Sprintf("PRAGMA page_size = %d", pageSize),
-		fmt.Sprintf("PRAGMA max_page_count = %d", maxPageCount),
 	}
 
 	for _, pragma := range pragmas {
@@ -109,19 +99,20 @@ func (cm *CacheManager) configurePragmas(db *sql.DB) error {
 
 func (cm *CacheManager) createTables(db *sql.DB) error {
 	query := `
-	CREATE TABLE IF NOT EXISTS cache_entries (
-		key TEXT PRIMARY KEY,
-		content BLOB,
-		last_accessed INTEGER,
-		created_at INTEGER
+	CREATE TABLE IF NOT EXISTS cache (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		bind TEXT NOT NULL,
+		content BLOB NOT NULL,
+		last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
-	CREATE INDEX IF NOT EXISTS idx_last_accessed ON cache_entries(last_accessed);
+	CREATE INDEX IF NOT EXISTS idx_bind ON cache (bind);
+	CREATE INDEX IF NOT EXISTS idx_last_accessed ON cache (last_accessed);
 	`
 	_, err := db.Exec(query)
 	return err
 }
 
-func (cm *CacheManager) cleanupOldCacheFiles(table, tenantID string, currentFreshness int64) error {
+func (cm *CacheManager) cleanupOldCacheFiles(table, tenantID string, currentFreshness string) error {
 	tenantDir := filepath.Join(cm.config.BaseDir, table, tenantID)
 
 	entries, err := os.ReadDir(tenantDir)
@@ -144,17 +135,13 @@ func (cm *CacheManager) cleanupOldCacheFiles(table, tenantID string, currentFres
 
 		// ファイル名からフレッシュネス値を取得
 		freshnessStr := strings.TrimSuffix(fileName, ".db")
-		freshness, err := strconv.ParseInt(freshnessStr, 10, 64)
-		if err != nil {
-			continue
-		}
 
 		// 現在のフレッシュネス値と異なる場合は削除
-		if freshness != currentFreshness {
+		if freshnessStr != currentFreshness {
 			filePath := filepath.Join(tenantDir, fileName)
 
 			// DBキャッシュからも削除
-			dbKey := cm.getDBKey(table, tenantID, freshness)
+			dbKey := cm.getDBKey(table, tenantID, freshnessStr)
 			if db, exists := cm.dbs[dbKey]; exists {
 				db.Close()
 				delete(cm.dbs, dbKey)

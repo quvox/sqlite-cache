@@ -16,8 +16,12 @@ import os
 class SqliteCacheLibrary:
     """Python client for sqcache library using ctypes."""
     
-    def __init__(self, library_path: str = "./build/sqcachelib.0.1.0.so"):
+    def __init__(self, library_path: str = None):
         """Initialize the client with the path to the sqcache library."""
+        if library_path is None:
+            # Get version from environment variable, default to 0.2.0
+            version = os.environ.get('VERSION', '0.2.0')
+            library_path = f"./build/sqcachelib.{version}.so"
         self.library_path = library_path
         self.lib = None
         self._load_library()
@@ -34,12 +38,12 @@ class SqliteCacheLibrary:
         self.lib.Init.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_double]
         self.lib.Init.restype = ctypes.c_char_p
         
-        # Get(char* table, char* tenantId, long long freshness, char* bind) -> char*
-        self.lib.Get.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_longlong, ctypes.c_char_p]
+        # Get(char* table, char* tenantId, char* freshness, char* bind) -> char*
+        self.lib.Get.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
         self.lib.Get.restype = ctypes.c_char_p
         
-        # Set(char* table, char* tenantId, long long freshness, char* bind, char* content, int contentLen) -> char*
-        self.lib.Set.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_longlong, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+        # Set(char* table, char* tenantId, char* freshness, char* bind, char* content, int contentLen) -> char*
+        self.lib.Set.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
         self.lib.Set.restype = ctypes.c_char_p
         
         # Delete(char* table) -> char*
@@ -79,16 +83,17 @@ class SqliteCacheLibrary:
         
         return True
     
-    def get(self, table: str, tenant_id: str, freshness: int, bind: str) -> Optional[bytes]:
+    def get(self, table: str, tenant_id: str, freshness: str, bind: str) -> Optional[bytes]:
         """Get data from cache."""
         if self.lib is None:
             raise RuntimeError("Library not loaded")
         
         table_c = table.encode('utf-8')
         tenant_id_c = tenant_id.encode('utf-8')
+        freshness_c = freshness.encode('utf-8')
         bind_c = bind.encode('utf-8')
         
-        result_ptr = self.lib.Get(table_c, tenant_id_c, freshness, bind_c)
+        result_ptr = self.lib.Get(table_c, tenant_id_c, freshness_c, bind_c)
         response = self._handle_response(result_ptr)
         
         if response.get("success", False):
@@ -104,20 +109,21 @@ class SqliteCacheLibrary:
         
         raise RuntimeError(f"Failed to get cache: {response.get('error', 'unknown error')}")
     
-    def set(self, table: str, tenant_id: str, freshness: int, bind: str, content: bytes) -> bool:
+    def set(self, table: str, tenant_id: str, freshness: str, bind: str, content: bytes) -> bool:
         """Set data in cache."""
         if self.lib is None:
             raise RuntimeError("Library not loaded")
         
         table_c = table.encode('utf-8')
         tenant_id_c = tenant_id.encode('utf-8')
+        freshness_c = freshness.encode('utf-8')
         bind_c = bind.encode('utf-8')
         
         # Content is passed as raw bytes with length
         content_ptr = ctypes.c_char_p(content)
         content_len = len(content)
         
-        result_ptr = self.lib.Set(table_c, tenant_id_c, freshness, bind_c, content_ptr, content_len)
+        result_ptr = self.lib.Set(table_c, tenant_id_c, freshness_c, bind_c, content_ptr, content_len)
         response = self._handle_response(result_ptr)
         
         if not response.get("success", False):
@@ -156,8 +162,9 @@ class SqliteCacheLibrary:
 def main():
     """Example usage of the SqliteCacheLibrary."""
     
-    # Try shared library paths
-    library_paths = ["./build/sqcachelib.0.1.0.so", "./build/mac/sqcachelib.0.1.0.so"]
+    # Try shared library paths with version from environment
+    version = os.environ.get('VERSION', '0.2.0')
+    library_paths = [f"./build/sqcachelib.{version}.so", f"./build/mac/sqcachelib.{version}.so"]
     
     cache = None
     for lib_path in library_paths:
@@ -185,7 +192,7 @@ def main():
         # Test data
         table = "users"
         tenant_id = "tenant_001"
-        freshness = int(time.time())
+        freshness = "fresh1"  # Use string as per DESIGN.md
         bind_key = "user_123"
         test_data = b'{"name": "John Doe", "email": "john@example.com"}'
         
