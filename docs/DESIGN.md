@@ -33,6 +33,28 @@ tenant_001, tenant_002は各テーブルのプライマリキーの値（テナ�
 
 
 
+### SQLiteのテーブルスキーマ
+
+キャッシュファイルはsqlite3のDBファイルであり、以下のスキーマを持つ。
+
+```sql
+CREATE TABLE cache
+(
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    bind          TEXT NOT NULL,
+    content       BLOB NOT NULL,
+    last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+また、bindとlast_accessedにインデックスを貼る。
+```sql
+CREATE INDEX idx_bind ON cache (bind);
+CREATE INDEX idx_last_accessed ON cache (last_accessed);
+```
+
+
+
 ## キャッシュファイルのライフサイクル
 
 * キャッシュ検索には、テーブル名、テナントID、フレッシュネス値と、バインド値を与える
@@ -57,8 +79,6 @@ tenant_001, tenant_002は各テーブルのプライマリキーの値（テナ�
 * 各dbファイルには、生成時に以下のpragmaを設定する
   - `PRAGMA journal_mode = OFF;`（WALモードでの書き込み）
   - `PRAGMA synchronous = NORMAL;`（書き込みの同期を通常に設定）
-  - `PRAGMA page_size = 4096;`（ページサイズを4KBに設定）
-  - `PRAGMA max_page_count = <ページ数>;`（最大ファイルサイズはページサイズ*ページ数となる）
 
 
 
@@ -72,17 +92,34 @@ tenant_001, tenant_002は各テーブルのプライマリキーの値（テナ�
 | Delete | table                                      | 指定テーブルのフォルダを削除する（ただ削除するだけ）         |
 
 
+#### 引数の形
+
+| 引数名      | 型       | 説明                       |
+| ----------- |---------|--------------------------|
+| base_dir    | string  | キャッシュファイルのベースディレクトリ      
+| max_size    | int     | キャッシュファイルの最大サイズ(MB)      |
+| cap         | float64 | キャッシュファイルの最大サイズを超えそう     
+| table       | string  | テーブル名                    |
+| tenant_id   | string  | テナントID                   |
+| freshness   | string  | フレッシュネス値                 |
+| bind        | string  | バインド値                    |
+| content     | []byte  | キャッシュコンテンツ(sqliteではBLOB) |
+
+
 
 ## テストコード
 
 テストコード(example/text_cache_lru.py)は、以下のシナリオをPythonで実装する。なお、ctypesを使ってキャッシュ制御機能を呼び出すこと。
 
-* max_size=10MB、cap=0.6で初期化
+* max_size=10MB、cap=0.5で初期化
 * 1レコードが100kB程度のサイズのコンテンツを作成する（コンテンツの最初にbind値を入れておく）
-* bind値として1〜200までの整数を与える
-* 1〜90までの整数のbind値のレコードを登録する
-* 1〜90までの適当なbind値30個を使って、キャッシュを検索する。すべてキャッシュヒットすること
-* 91〜200までの整数のbind値のレコードを登録する
-* 1〜99までの適当なbind値30個を使って、キャッシュを検索する。すべてキャッシュミスすること
-* 131〜200までの適当なbind値30個を使って、キャッシュを検索する。すべてキャッシュヒットすること
-
+* freshness="fresh1"かつbind値として1〜200までの整数を与える
+* freshness="fresh1"かつ1〜90までの整数のbind値のレコードを登録する
+* freshness="fresh1"かつ1〜90までの適当なbind値30個を使って、キャッシュを検索する。すべてキャッシュヒットすること
+* freshness="fresh1"かつ91〜200までの整数のbind値のレコードを登録する
+* freshness="fresh1"かつ1〜99までの適当なbind値30個を使って、キャッシュを検索する。すべてキャッシュミスすること
+* freshness="fresh1"かつ131〜200までの適当なbind値30個を使って、キャッシュを検索する。すべてキャッシュヒットすること
+* freshness="fresh2"かつbind値が1のレコードを検索しようとする
+* 検索に失敗し、その後freshness="fresh1"のキャッシュファイルが削除されていることを確認する
+* freshness="fresh2"かつbind値が1〜10のレコードを登録する
+* freshness="fresh2"かつ1〜10までのbind値使って、キャッシュを検索する。すべてキャッシュヒットすること
