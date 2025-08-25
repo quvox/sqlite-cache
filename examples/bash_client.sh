@@ -91,9 +91,9 @@ cache_set() {
     local bind="$4"
     local content="$5"
     
-    # Note: Content with spaces needs to be handled carefully
-    # For now, simple data without spaces works best
-    send_command "SET $table $tenant_id $freshness $bind $content" > /dev/null
+    # Base64 encode the content to handle spaces and special characters
+    local encoded_content=$(echo -n "$content" | base64 -w 0 2>/dev/null || echo -n "$content" | base64)
+    send_command "SET $table $tenant_id $freshness $bind $encoded_content" > /dev/null
 }
 
 # Function to get cache data
@@ -107,8 +107,9 @@ cache_get() {
     if response=$(send_command "GET $table $tenant_id $freshness $bind" 2>/dev/null); then
         # Check if it's a cache hit (starts with "OK: ")
         if [[ "$response" == OK:* ]]; then
-            # Extract content after "OK: "
-            echo "${response#OK: }"
+            # Extract and decode content after "OK: "
+            local encoded_data="${response#OK: }"
+            echo "$encoded_data" | base64 -d 2>/dev/null || echo "$encoded_data"
             return 0
         elif [[ "$response" == MISS:* ]]; then
             return 1
@@ -144,6 +145,7 @@ main() {
     fi
     
     # Note: jq is no longer required for text-based API
+    # Base64 is used for encoding/decoding content with spaces
     echo "Starting sqcache process..."
     start_sqcache
     echo "✓ sqcache process started (PID: $SQCACHE_PID)"
@@ -153,7 +155,7 @@ main() {
     local tenant_id="tenant_001" 
     local freshness="fresh1"
     local bind_key="user_123"
-    local test_data='{"name":"John_Doe","email":"john@example.com"}'
+    local test_data='{"name": "John Doe", "email": "john@example.com"}'
     
     echo "Initializing cache..."
     if cache_init "./cache" 100 0.8; then

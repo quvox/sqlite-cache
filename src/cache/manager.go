@@ -103,7 +103,8 @@ func (cm *CacheManager) createTables(db *sql.DB) error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		bind TEXT NOT NULL,
 		content BLOB NOT NULL,
-		last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 	CREATE INDEX IF NOT EXISTS idx_bind ON cache (bind);
 	CREATE INDEX IF NOT EXISTS idx_last_accessed ON cache (last_accessed);
