@@ -3,7 +3,7 @@
 # SQLite Cache Bash Client
 #
 # This example demonstrates how to interact with the sqcache binary
-# from bash using JSON over stdin/stdout communication.
+# from bash using simple text commands over stdin/stdout communication.
 #
 
 set -euo pipefail
@@ -53,9 +53,7 @@ start_sqcache() {
 
 # Function to send command to sqcache and get response
 send_command() {
-    local command="$1"
-    local request="$2"
-    local cmd_line="$command $request"
+    local cmd_line="$1"
     local response
     
     # Send command
@@ -63,12 +61,9 @@ send_command() {
     
     # Read response with timeout
     if read -t 5 -r response <&4; then
-        # Parse success field from JSON response
-        local success=$(echo "$response" | jq -r '.success // false')
-        
-        if [[ "$success" != "true" ]]; then
-            local error_msg=$(echo "$response" | jq -r '.error // "unknown error"')
-            echo "Error: $error_msg" >&2
+        # Check if response starts with OK:, ERROR:, or MISS:
+        if [[ "$response" == ERROR:* ]]; then
+            echo "Error: ${response#ERROR: }" >&2
             return 1
         fi
         
@@ -85,13 +80,7 @@ cache_init() {
     local max_size="$2"
     local cap="$3"
     
-    local request=$(jq -nc \
-        --arg base_dir "$base_dir" \
-        --argjson max_size "$max_size" \
-        --argjson cap "$cap" \
-        '{base_dir: $base_dir, max_size: $max_size, cap: $cap}')
-    
-    send_command "INIT" "$request" > /dev/null
+    send_command "INIT $base_dir $max_size $cap" > /dev/null
 }
 
 # Function to set cache data
@@ -102,18 +91,9 @@ cache_set() {
     local bind="$4"
     local content="$5"
     
-    # Base64 encode the content
-    local encoded_content=$(echo -n "$content" | base64 -w 0)
-    
-    local request=$(jq -nc \
-        --arg table "$table" \
-        --arg tenant_id "$tenant_id" \
-        --arg freshness "$freshness" \
-        --arg bind "$bind" \
-        --arg content "$encoded_content" \
-        '{table: $table, tenant_id: $tenant_id, freshness: $freshness, bind: $bind, content: $content}')
-    
-    send_command "SET" "$request" > /dev/null
+    # Note: Content with spaces needs to be handled carefully
+    # For now, simple data without spaces works best
+    send_command "SET $table $tenant_id $freshness $bind $content" > /dev/null
 }
 
 # Function to get cache data
@@ -123,20 +103,15 @@ cache_get() {
     local freshness="$3"
     local bind="$4"
     
-    local request=$(jq -nc \
-        --arg table "$table" \
-        --arg tenant_id "$tenant_id" \
-        --arg freshness "$freshness" \
-        --arg bind "$bind" \
-        '{table: $table, tenant_id: $tenant_id, freshness: $freshness, bind: $bind}')
-    
     local response
-    if response=$(send_command "GET" "$request" 2>/dev/null); then
-        # Extract and decode data
-        local encoded_data=$(echo "$response" | jq -r '.data // empty')
-        if [[ -n "$encoded_data" ]]; then
-            echo "$encoded_data" | base64 -d
+    if response=$(send_command "GET $table $tenant_id $freshness $bind" 2>/dev/null); then
+        # Check if it's a cache hit (starts with "OK: ")
+        if [[ "$response" == OK:* ]]; then
+            # Extract content after "OK: "
+            echo "${response#OK: }"
             return 0
+        elif [[ "$response" == MISS:* ]]; then
+            return 1
         fi
     fi
     
@@ -148,14 +123,12 @@ cache_get() {
 cache_delete() {
     local table="$1"
     
-    local request=$(jq -nc --arg table "$table" '{table: $table}')
-    send_command "DELETE" "$request" > /dev/null
+    send_command "DELETE $table" > /dev/null
 }
 
 # Function to close cache
 cache_close() {
-    local request='{}'
-    send_command "CLOSE" "$request" > /dev/null
+    send_command "CLOSE" > /dev/null
 }
 
 # Main function
@@ -170,13 +143,7 @@ main() {
         exit 1
     fi
     
-    # Check if jq is available
-    if ! command -v jq >/dev/null 2>&1; then
-        echo "Error: jq is required but not installed."
-        echo "Please install jq: sudo apt-get install jq (Ubuntu) or brew install jq (macOS)"
-        exit 1
-    fi
-    
+    # Note: jq is no longer required for text-based API
     echo "Starting sqcache process..."
     start_sqcache
     echo "✓ sqcache process started (PID: $SQCACHE_PID)"
@@ -186,7 +153,7 @@ main() {
     local tenant_id="tenant_001" 
     local freshness="fresh1"
     local bind_key="user_123"
-    local test_data='{"name": "John Doe", "email": "john@example.com"}'
+    local test_data='{"name":"John_Doe","email":"john@example.com"}'
     
     echo "Initializing cache..."
     if cache_init "./cache" 100 0.8; then

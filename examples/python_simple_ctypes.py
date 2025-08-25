@@ -21,9 +21,17 @@ def load_library(library_path: str = None):
     global _lib
     
     if library_path is None:
-        # Get version from environment variable, default to 0.2.0
-        version = os.environ.get('VERSION', '0.2.0')
-        library_path = f"./build/sqcachelib.{version}.so"
+        # Get version from environment variable, default to 0.3.0
+        version = os.environ.get('VERSION', '0.3.0')
+        # Try both project root and examples directory
+        paths = [f"./build/sqcachelib.{version}.so", f"../build/sqcachelib.{version}.so"]
+        library_path = None
+        for p in paths:
+            if os.path.exists(p):
+                library_path = p
+                break
+        if library_path is None:
+            library_path = f"./build/sqcachelib.{version}.so"  # fallback
     
     if not os.path.exists(library_path):
         raise FileNotFoundError(f"Library not found: {library_path}")
@@ -31,17 +39,21 @@ def load_library(library_path: str = None):
     _lib = ctypes.CDLL(library_path)
     
     # Configure function signatures
-    # Init(char* baseDir, int maxSize, double cap) -> char*
+    # Init(char* baseDir, int maxSize, double cap) -> int
     _lib.Init.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_double]
-    _lib.Init.restype = ctypes.c_char_p
+    _lib.Init.restype = ctypes.c_int
     
-    # Get(char* table, char* tenantId, char* freshness, char* bind) -> char*
-    _lib.Get.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
-    _lib.Get.restype = ctypes.c_char_p
+    # Get(char* table, char* tenantId, char* freshness, char* bind, int* resultLen) -> char*
+    _lib.Get.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_int)]
+    _lib.Get.restype = ctypes.c_void_p
     
-    # Set(char* table, char* tenantId, char* freshness, char* bind, char* content, int contentLen) -> char*
+    # FreeMem(char* ptr)
+    _lib.FreeMem.argtypes = [ctypes.c_void_p]
+    _lib.FreeMem.restype = None
+    
+    # Set(char* table, char* tenantId, char* freshness, char* bind, char* content, int contentLen) -> int
     _lib.Set.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
-    _lib.Set.restype = ctypes.c_char_p
+    _lib.Set.restype = ctypes.c_int
 
 
 def _handle_response(result_ptr):
@@ -64,11 +76,10 @@ def init(base_dir: str, max_size: int, cap: float = 0.8) -> bool:
         raise RuntimeError("Library not loaded. Call load_library() first.")
     
     base_dir_c = base_dir.encode('utf-8')
-    result_ptr = _lib.Init(base_dir_c, max_size, cap)
-    response = _handle_response(result_ptr)
+    result = _lib.Init(base_dir_c, max_size, cap)
     
-    if not response.get("success", False):
-        raise RuntimeError(f"Failed to initialize cache: {response.get('error', 'unknown error')}")
+    if result == 0:
+        raise RuntimeError("Failed to initialize cache")
     
     return True
 
@@ -83,21 +94,21 @@ def get(table: str, tenant_id: str, freshness: str, bind: str) -> Optional[bytes
     freshness_c = freshness.encode('utf-8')
     bind_c = bind.encode('utf-8')
     
-    result_ptr = _lib.Get(table_c, tenant_id_c, freshness_c, bind_c)
-    response = _handle_response(result_ptr)
+    result_len = ctypes.c_int(0)
+    result_ptr = _lib.Get(table_c, tenant_id_c, freshness_c, bind_c, ctypes.byref(result_len))
     
-    if response.get("success", False):
-        # Data is base64 encoded in JSON
-        import base64
-        data = response.get("data")
-        if data:
-            return base64.b64decode(data)
+    if not result_ptr or result_len.value == 0:
         return None
     
-    if "not found" in response.get("error", "").lower():
-        return None
-    
-    raise RuntimeError(f"Failed to get cache: {response.get('error', 'unknown error')}")
+    try:
+        # メモリからデータをコピーして取得
+        buffer = ctypes.create_string_buffer(result_len.value)
+        ctypes.memmove(buffer, result_ptr, result_len.value)
+        return buffer.raw
+    finally:
+        # Goで確保されたメモリを解放
+        if result_ptr:
+            _lib.FreeMem(result_ptr)
 
 
 def set(table: str, tenant_id: str, freshness: str, bind: str, content: bytes) -> bool:
@@ -114,11 +125,10 @@ def set(table: str, tenant_id: str, freshness: str, bind: str, content: bytes) -
     content_ptr = ctypes.c_char_p(content)
     content_len = len(content)
     
-    result_ptr = _lib.Set(table_c, tenant_id_c, freshness_c, bind_c, content_ptr, content_len)
-    response = _handle_response(result_ptr)
+    result = _lib.Set(table_c, tenant_id_c, freshness_c, bind_c, content_ptr, content_len)
     
-    if not response.get("success", False):
-        raise RuntimeError(f"Failed to set cache: {response.get('error', 'unknown error')}")
+    if result == 0:
+        raise RuntimeError("Failed to set cache")
     
     return True
 
@@ -127,8 +137,11 @@ def main():
     """Example usage of the simple cache functions."""
     
     # Try different library paths with version from environment
-    version = os.environ.get('VERSION', '0.2.0')
-    library_paths = [f"./build/sqcachelib.{version}.so", f"./build/mac/sqcachelib.{version}.so"]
+    version = os.environ.get('VERSION', '0.3.0')
+    library_paths = [
+        f"./build/sqcachelib.{version}.so", f"./build/mac/sqcachelib.{version}.so",
+        f"../build/sqcachelib.{version}.so", f"../build/mac/sqcachelib.{version}.so"
+    ]
     
     library_loaded = False
     for lib_path in library_paths:

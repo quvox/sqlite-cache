@@ -1,172 +1,68 @@
 package api
 
 import (
-	"encoding/json"
 	"sqlite-cache/src/cache"
 )
 
 var globalCacheManager *cache.CacheManager
 
-type InitRequest struct {
-	BaseDir string  `json:"base_dir"`
-	MaxSize int     `json:"max_size"`
-	Cap     float64 `json:"cap"`
-}
-
-type GetRequest struct {
-	Table     string `json:"table"`
-	TenantID  string `json:"tenant_id"`
-	Freshness string `json:"freshness"`
-	Bind      string `json:"bind"`
-}
-
-type SetRequest struct {
-	Table     string `json:"table"`
-	TenantID  string `json:"tenant_id"`
-	Freshness string `json:"freshness"`
-	Bind      string `json:"bind"`
-	Content   []byte `json:"content"`
-}
-
-type DeleteRequest struct {
-	Table string `json:"table"`
-}
-
-type Response struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
-}
-
-func Init(jsonRequest string) string {
-	var req InitRequest
-	if err := json.Unmarshal([]byte(jsonRequest), &req); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
-	}
-
-	globalCacheManager = cache.NewCacheManager(cache.CacheConfig{})
-
-	if err := globalCacheManager.Init(req.BaseDir, req.MaxSize, req.Cap); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
-	}
-
-	return toJSON(Response{Success: true})
-}
-
-func Get(jsonRequest string) string {
+func Close() bool {
 	if globalCacheManager == nil {
-		return toJSON(Response{Success: false, Error: "cache not initialized"})
-	}
-
-	var req GetRequest
-	if err := json.Unmarshal([]byte(jsonRequest), &req); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
-	}
-
-	content, err := globalCacheManager.Get(req.Table, req.TenantID, req.Freshness, req.Bind)
-	if err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
-	}
-
-	return toJSON(Response{Success: true, Data: content})
-}
-
-func Set(jsonRequest string) string {
-	if globalCacheManager == nil {
-		return toJSON(Response{Success: false, Error: "cache not initialized"})
-	}
-
-	var req SetRequest
-	if err := json.Unmarshal([]byte(jsonRequest), &req); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
-	}
-
-	if err := globalCacheManager.Set(req.Table, req.TenantID, req.Freshness, req.Bind, req.Content); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
-	}
-
-	return toJSON(Response{Success: true})
-}
-
-func Delete(jsonRequest string) string {
-	if globalCacheManager == nil {
-		return toJSON(Response{Success: false, Error: "cache not initialized"})
-	}
-
-	var req DeleteRequest
-	if err := json.Unmarshal([]byte(jsonRequest), &req); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
-	}
-
-	if err := globalCacheManager.Delete(req.Table); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
-	}
-
-	return toJSON(Response{Success: true})
-}
-
-func Close() string {
-	if globalCacheManager == nil {
-		return toJSON(Response{Success: false, Error: "cache not initialized"})
+		return false
 	}
 
 	if err := globalCacheManager.Close(); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
+		return false
 	}
 
 	globalCacheManager = nil
-	return toJSON(Response{Success: true})
+	return true
 }
 
-// 個別引数版の関数
-func InitParams(baseDir string, maxSize int, cap float64) string {
+// Init initializes the cache system
+func Init(baseDir string, maxSize int, cap float64) bool {
 	globalCacheManager = cache.NewCacheManager(cache.CacheConfig{})
 
 	if err := globalCacheManager.Init(baseDir, maxSize, cap); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
+		return false
 	}
 
-	return toJSON(Response{Success: true})
+	return true
 }
 
-func GetParams(table, tenantId string, freshness string, bind string) string {
+func Get(table, tenantId string, freshness string, bind string) []byte {
 	if globalCacheManager == nil {
-		return toJSON(Response{Success: false, Error: "cache not initialized"})
+		return nil
 	}
 
 	content, err := globalCacheManager.Get(table, tenantId, freshness, bind)
 	if err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
+		return nil
 	}
 
-	return toJSON(Response{Success: true, Data: content})
+	return content
 }
 
-func SetParams(table, tenantId string, freshness string, bind string, content []byte) string {
+func Set(table, tenantId string, freshness string, bind string, content []byte) bool {
 	if globalCacheManager == nil {
-		return toJSON(Response{Success: false, Error: "cache not initialized"})
+		return false
 	}
 
 	if err := globalCacheManager.Set(table, tenantId, freshness, bind, content); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
+		return false
 	}
 
-	return toJSON(Response{Success: true})
+	return true
 }
 
-func DeleteParams(table string) string {
+func Delete(table string) bool {
 	if globalCacheManager == nil {
-		return toJSON(Response{Success: false, Error: "cache not initialized"})
+		return false
 	}
 
 	if err := globalCacheManager.Delete(table); err != nil {
-		return toJSON(Response{Success: false, Error: err.Error()})
+		return false
 	}
 
-	return toJSON(Response{Success: true})
-}
-
-func toJSON(response Response) string {
-	data, _ := json.Marshal(response)
-	return string(data)
+	return true
 }
