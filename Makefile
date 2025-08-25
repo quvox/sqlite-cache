@@ -1,7 +1,7 @@
 .PHONY: build build-lib build-lib-mac build-lib-linux build-lib-linux-static build-linux-static clean test deps fmt vet print-version docker-build docker-build-centos7
 
 # Variables
-VERSION?=0.2.1
+VERSION?=0.2.2
 BINARY_NAME=sqcache
 LIB_NAME=sqcachelib
 SRC_DIR=src
