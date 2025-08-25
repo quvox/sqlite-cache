@@ -24,8 +24,20 @@ class SqliteCacheLibrary:
         if library_path is None:
             # Get version from environment variable, default to 0.3.0
             version = os.environ.get('VERSION', '0.3.0')
-            # Try both project root and examples directory
-            paths = [f"./build/sqcachelib.{version}.so", f"../build/sqcachelib.{version}.so"]
+            # Try various paths: project root, examples directory, Linux build, Lambda build, and Lambda environment
+            paths = [
+                f"./build/sqcachelib.{version}.so", 
+                f"../build/sqcachelib.{version}.so",
+                f"./build/linux/sqcachelib.{version}.so",
+                f"../build/linux/sqcachelib.{version}.so",
+                f"./build/linux/sqcachelib.{version}.arm64.so",
+                f"../build/linux/sqcachelib.{version}.arm64.so",
+                f"./build/lambda/sqcachelib.{version}.so",
+                f"../build/lambda/sqcachelib.{version}.so",
+                f"./build/lambda/sqcachelib.{version}.arm64.so",
+                f"../build/lambda/sqcachelib.{version}.arm64.so",
+                f"/var/task/sqcachelib.{version}.so"
+            ]
             library_path = None
             for p in paths:
                 if os.path.exists(p):
@@ -42,7 +54,29 @@ class SqliteCacheLibrary:
         if not os.path.exists(self.library_path):
             raise FileNotFoundError(f"Library not found: {self.library_path}")
         
-        self.lib = ctypes.CDLL(self.library_path)
+        print(f"Trying to load library: {self.library_path}")
+        try:
+            self.lib = ctypes.CDLL(self.library_path)
+            print(f"Successfully loaded: {self.library_path}")
+        except Exception as e:
+            print(f"Failed to load library: {e}")
+            # Try different loading strategies for Amazon Linux 2 compatibility
+            loading_strategies = [
+                ("RTLD_LAZY", lambda: ctypes.CDLL(self.library_path, mode=ctypes.RTLD_LAZY)),
+                ("RTLD_NOW", lambda: ctypes.CDLL(self.library_path, mode=ctypes.RTLD_NOW)),
+                ("RTLD_GLOBAL", lambda: ctypes.CDLL(self.library_path, mode=ctypes.RTLD_GLOBAL)),
+            ]
+            
+            for strategy_name, loader in loading_strategies:
+                try:
+                    print(f"Attempting to load with {strategy_name} mode...")
+                    self.lib = loader()
+                    print(f"Success with {strategy_name} mode!")
+                    break
+                except Exception as e2:
+                    print(f"{strategy_name} also failed: {e2}")
+            else:
+                raise RuntimeError(f"Cannot load library {self.library_path}: {e}") from e
         
         # Configure function signatures for new API
         # Init(char* baseDir, int maxSize, double cap) -> int

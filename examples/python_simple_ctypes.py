@@ -23,8 +23,20 @@ def load_library(library_path: str = None):
     if library_path is None:
         # Get version from environment variable, default to 0.3.0
         version = os.environ.get('VERSION', '0.3.0')
-        # Try both project root and examples directory
-        paths = [f"./build/sqcachelib.{version}.so", f"../build/sqcachelib.{version}.so"]
+        # Try various paths: project root, examples directory, Linux build, Lambda build, and Lambda environment
+        paths = [
+            f"./build/sqcachelib.{version}.so", 
+            f"../build/sqcachelib.{version}.so",
+            f"./build/linux/sqcachelib.{version}.so",
+            f"../build/linux/sqcachelib.{version}.so",
+            f"./build/linux/sqcachelib.{version}.arm64.so",
+            f"../build/linux/sqcachelib.{version}.arm64.so",
+            f"./build/lambda/sqcachelib.{version}.so",
+            f"../build/lambda/sqcachelib.{version}.so",
+            f"./build/lambda/sqcachelib.{version}.arm64.so",
+            f"../build/lambda/sqcachelib.{version}.arm64.so",
+            f"/var/task/sqcachelib.{version}.so"
+        ]
         library_path = None
         for p in paths:
             if os.path.exists(p):
@@ -36,7 +48,49 @@ def load_library(library_path: str = None):
     if not os.path.exists(library_path):
         raise FileNotFoundError(f"Library not found: {library_path}")
     
-    _lib = ctypes.CDLL(library_path)
+    print(f"Trying to load library: {library_path}")
+    try:
+        _lib = ctypes.CDLL(library_path)
+        print(f"Successfully loaded: {library_path}")
+    except Exception as e:
+        print(f"Failed to load library: {e}")
+        # Try to get more diagnostic information
+        import platform
+        print(f"Platform: {platform.platform()}")
+        print(f"Architecture: {platform.machine()}")
+        print(f"Python version: {platform.python_version()}")
+        
+        # Try different loading strategies for Amazon Linux 2 compatibility
+        loading_strategies = [
+            ("RTLD_LAZY", lambda: ctypes.CDLL(library_path, mode=ctypes.RTLD_LAZY)),
+            ("RTLD_NOW", lambda: ctypes.CDLL(library_path, mode=ctypes.RTLD_NOW)),
+            ("RTLD_GLOBAL", lambda: ctypes.CDLL(library_path, mode=ctypes.RTLD_GLOBAL)),
+        ]
+        
+        for strategy_name, loader in loading_strategies:
+            try:
+                print(f"Attempting to load with {strategy_name} mode...")
+                _lib = loader()
+                print(f"Success with {strategy_name} mode!")
+                break
+            except Exception as e2:
+                print(f"{strategy_name} also failed: {e2}")
+        else:
+            # If all strategies fail, try to provide helpful error information
+            import subprocess
+            try:
+                ldd_output = subprocess.check_output(["ldd", library_path], stderr=subprocess.STDOUT, text=True)
+                print(f"Library dependencies (ldd):\\n{ldd_output}")
+            except Exception:
+                print("Could not run 'ldd' to check dependencies")
+            
+            try:
+                objdump_output = subprocess.check_output(["objdump", "-p", library_path], stderr=subprocess.STDOUT, text=True)
+                print(f"Library info (objdump):\\n{objdump_output[:1000]}...")  # Truncate output
+            except Exception:
+                print("Could not run 'objdump' to check library info")
+            
+            raise RuntimeError(f"Cannot load library {library_path}: {e}") from e
     
     # Configure function signatures
     # Init(char* baseDir, int maxSize, double cap) -> int
