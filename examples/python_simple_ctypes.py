@@ -56,20 +56,6 @@ def load_library(library_path: str = None):
     _lib.Set.restype = ctypes.c_int
 
 
-def _handle_response(result_ptr):
-    """Handle the response from a library function call."""
-    if not result_ptr:
-        raise RuntimeError("No response from library function")
-    
-    # Convert C string to Python string
-    result_str = ctypes.string_at(result_ptr).decode('utf-8')
-    
-    try:
-        return json.loads(result_str)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Invalid JSON response: {result_str}") from e
-
-
 def init(base_dir: str, max_size: int, cap: float = 0.8) -> bool:
     """Initialize the cache system."""
     if _lib is None:
