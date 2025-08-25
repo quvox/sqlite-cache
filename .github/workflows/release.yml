@@ -87,7 +87,7 @@ jobs:
 
   build-native-linux:
     name: Build Native (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04  # Use older Ubuntu for better GLIBC compatibility
     needs: run-tests
 
     steps:
@@ -117,20 +117,20 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # Build command-line binary
-          make build VERSION=$VERSION
+          # Build command-line binary with static linking for compatibility
+          make build-linux-static VERSION=$VERSION
           
-          # Build shared library
-          make build-lib VERSION=$VERSION
+          # Build shared library with static linking for compatibility
+          make build-lib-linux-static VERSION=$VERSION
           
           # Create Linux directory and copy files
           mkdir -p build/linux
-          cp build/sqcache build/linux/sqcache
-          cp build/sqcachelib.$VERSION.so build/linux/sqcachelib.$VERSION.so
+          cp build/linux/sqcache-static build/linux/sqcache
+          cp build/linux/sqcachelib.$VERSION.so build/linux/sqcachelib.$VERSION.so
           
           # Copy header file if it exists
-          if [ -f "build/sqcachelib.$VERSION.h" ]; then
-            cp build/sqcachelib.$VERSION.h build/linux/sqcachelib.$VERSION.h
+          if [ -f "build/linux/sqcachelib.$VERSION.h" ]; then
+            cp build/linux/sqcachelib.$VERSION.h build/linux/sqcachelib.$VERSION.h
           fi
 
       - name: Upload Linux artifacts
