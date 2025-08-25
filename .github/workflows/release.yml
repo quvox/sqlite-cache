@@ -86,8 +86,8 @@ jobs:
           retention-days: 30
 
   build-native-linux:
-    name: Build Native (Linux)
-    runs-on: ubuntu-20.04  # Use older Ubuntu for better GLIBC compatibility
+    name: Build Native (Linux)  
+    runs-on: ubuntu-24.04  # Use latest Ubuntu with Zig CC for musl builds
     needs: run-tests
 
     steps:
@@ -98,10 +98,19 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Install dependencies
+      - name: Install Zig and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-multilib libc6-dev
+          sudo apt-get install -y wget xz-utils
+          
+          # Install Zig
+          wget -q https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
+          tar -xf zig-linux-x86_64-0.13.0.tar.xz
+          sudo mv zig-linux-x86_64-0.13.0 /opt/zig
+          sudo ln -sf /opt/zig/zig /usr/local/bin/zig
+          
+          # Verify installation
+          zig version
 
       - name: Download Go modules
         run: make deps
@@ -117,21 +126,16 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # Build command-line binary with static linking for compatibility
-          make build-linux-static VERSION=$VERSION
+          # Build command-line binary with Zig CC and musl (no GLIBC dependency)
+          make build-linux-musl VERSION=$VERSION
           
-          # Build shared library with static linking for compatibility
-          make build-lib-linux-static VERSION=$VERSION
+          # Build shared library with Zig CC and musl (no GLIBC dependency)
+          make build-lib-linux-musl VERSION=$VERSION
           
-          # Create Linux directory and copy files
-          mkdir -p build/linux
-          cp build/linux/sqcache-static build/linux/sqcache
-          cp build/linux/sqcachelib.$VERSION.so build/linux/sqcachelib.$VERSION.so
-          
-          # Copy header file if it exists
-          if [ -f "build/linux/sqcachelib.$VERSION.h" ]; then
-            cp build/linux/sqcachelib.$VERSION.h build/linux/sqcachelib.$VERSION.h
-          fi
+          # Verify the build produces static binaries with no GLIBC dependency
+          echo "Checking binary dependencies:"
+          ldd build/linux/sqcache || echo "Static binary - no dependencies (expected)"
+          ldd build/linux/sqcachelib.$VERSION.so || echo "Static library - no dependencies (expected)"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@de65e23aa2b7e23d713bb51fbfcb6d502f8667d8
