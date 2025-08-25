@@ -71,10 +71,10 @@ func (cm *CacheManager) Set(table, tenantID string, freshness string, bind strin
 
 	// エントリを挿入または更新
 	query := `
-	INSERT OR REPLACE INTO cache (bind, content, last_accessed)
-	VALUES (?, ?, ?)
+	INSERT OR REPLACE INTO cache (bind, content, last_accessed, updated_at)
+	VALUES (?, ?, ?, ?)
 	`
-	_, err = db.Exec(query, bind, content, now)
+	_, err = db.Exec(query, bind, content, now, now)
 	if err != nil {
 		return fmt.Errorf("failed to insert cache entry: %w", err)
 	}

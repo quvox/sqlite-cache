@@ -24,12 +24,34 @@ AWS Lambdaのようなサーバレス環境での並列実行を想定してお�
 sqcache help
 ```
 
-初期化、登録、検索は、すべて**JSON形式**でsqcacheの標準入力に与える。
+初期化、登録、検索は、すべて**シンプルなテキストコマンド**でsqcacheの標準入力に与える。
 ```bash
-echo 'INIT {"base_dir": "./cache", "max_size": 100, "cap": 0.8}' | sqcache
-echo {"table": "users", "tenant_id": "tenant1", "freshness": 1234567890, "bind": "key1", "content": "data" | sqcache
-echo {"table": "users", "tenant_id": "tenant1", "freshness": 1234567890, "bind": "key1"} | sqcache
+echo 'INIT ./cache 100 0.8' | sqcache
+echo 'SET users tenant1 fresh1 key1 data' | sqcache
+echo 'GET users tenant1 fresh1 key1' | sqcache
+echo 'DELETE users' | sqcache
+echo 'CLOSE' | sqcache
 ```
+
+**利用可能なコマンド:**
+- `INIT base_dir max_size cap` - キャッシュシステムの初期化
+  - `base_dir`: キャッシュファイルの保存ディレクトリ
+  - `max_size`: 最大キャッシュサイズ（MB、整数値）
+  - `cap`: LRU削除の閾値（0.0-1.0の小数値）
+- `SET table tenant_id freshness bind content` - キャッシュデータの登録
+  - `table`: テーブル名
+  - `tenant_id`: テナントID
+  - `freshness`: フレッシュネス文字列
+  - `bind`: バインドキー
+  - `content`: 保存するデータ
+- `GET table tenant_id freshness bind` - キャッシュデータの取得
+- `DELETE table` - テーブル内の全キャッシュデータの削除
+- `CLOSE` - キャッシュシステムの終了
+
+**レスポンス形式:**
+- `OK: <result>` - 成功
+- `ERROR: <reason>` - 失敗
+- `MISS: <reason>` - キャッシュミス
 
 
 
@@ -37,9 +59,33 @@ echo {"table": "users", "tenant_id": "tenant1", "freshness": 1234567890, "bind":
 
 #### Pythonで利用する
 
-sqcachelib.[バージョン].soをctypesで呼び出すサンプルコードは、example/python_ctypes_client.pyに示す。
+sqcachelib.[バージョン].soをctypesで呼び出すサンプルコードは、examples/python_ctypes_client.pyに示す。
 
+**利用可能なサンプル:**
+- `examples/python_ctypes_client.py` - フル機能のPythonクライアント（クラスベース）
+- `examples/python_simple_ctypes.py` - シンプルなPythonクライアント（関数ベース）
+- `examples/test_cache_lru.py` - LRUアルゴリズムのテストケース
+- `examples/bash_client.sh` - Bashクライアントの実装例
 
+### ビルドとテスト
+
+**ビルド:**
+```bash
+make build          # コマンドラインツールのビルド
+make build-lib       # 共有ライブラリのビルド
+make build-all       # 全てのビルド
+```
+
+**テスト:**
+```bash
+make test           # 全てのサンプルコードの実行テスト
+```
+
+**クロスプラットフォームビルド（Linux用）:**
+```bash
+make build-linux-musl     # musl libc使用のLinux用ビルド
+make build-lib-linux-musl # musl libc使用のLinux用ライブラリビルド
+```
 
 ### go mod
 

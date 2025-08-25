@@ -22,9 +22,17 @@ class SqliteCacheLibrary:
     def __init__(self, library_path: str = None):
         """Initialize the client with the path to the sqcache library."""
         if library_path is None:
-            # Get version from environment variable, default to 0.2.0
-            version = os.environ.get('VERSION', '0.2.0')
-            library_path = f"./build/sqcachelib.{version}.so"
+            # Get version from environment variable, default to 0.3.0
+            version = os.environ.get('VERSION', '0.3.0')
+            # Try both project root and examples directory
+            paths = [f"./build/sqcachelib.{version}.so", f"../build/sqcachelib.{version}.so"]
+            library_path = None
+            for p in paths:
+                if os.path.exists(p):
+                    library_path = p
+                    break
+            if library_path is None:
+                library_path = f"./build/sqcachelib.{version}.so"  # fallback
         self.library_path = library_path
         self.lib = None
         self._load_library()
@@ -37,25 +45,29 @@ class SqliteCacheLibrary:
         self.lib = ctypes.CDLL(self.library_path)
         
         # Configure function signatures for new API
-        # Init(char* baseDir, int maxSize, double cap) -> char*
+        # Init(char* baseDir, int maxSize, double cap) -> int
         self.lib.Init.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_double]
-        self.lib.Init.restype = ctypes.c_char_p
+        self.lib.Init.restype = ctypes.c_int
         
-        # Get(char* table, char* tenantId, char* freshness, char* bind) -> char*
-        self.lib.Get.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
-        self.lib.Get.restype = ctypes.c_char_p
+        # Get(char* table, char* tenantId, char* freshness, char* bind, int* resultLen) -> char*
+        self.lib.Get.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_int)]
+        self.lib.Get.restype = ctypes.c_void_p
         
-        # Set(char* table, char* tenantId, char* freshness, char* bind, char* content, int contentLen) -> char*
+        # FreeMem(char* ptr)
+        self.lib.FreeMem.argtypes = [ctypes.c_void_p]
+        self.lib.FreeMem.restype = None
+        
+        # Set(char* table, char* tenantId, char* freshness, char* bind, char* content, int contentLen) -> int
         self.lib.Set.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
-        self.lib.Set.restype = ctypes.c_char_p
+        self.lib.Set.restype = ctypes.c_int
         
-        # Delete(char* table) -> char*
+        # Delete(char* table) -> int
         self.lib.Delete.argtypes = [ctypes.c_char_p]
-        self.lib.Delete.restype = ctypes.c_char_p
+        self.lib.Delete.restype = ctypes.c_int
         
-        # Close() -> char*
+        # Close() -> int
         self.lib.Close.argtypes = []
-        self.lib.Close.restype = ctypes.c_char_p
+        self.lib.Close.restype = ctypes.c_int
     
     def _handle_response(self, result_ptr) -> Dict[str, Any]:
         """Handle the response from a library function call."""
@@ -78,11 +90,10 @@ class SqliteCacheLibrary:
             raise RuntimeError("Library not loaded")
         
         base_dir_c = base_dir.encode('utf-8')
-        result_ptr = self.lib.Init(base_dir_c, max_size, cap)
-        response = self._handle_response(result_ptr)
+        result = self.lib.Init(base_dir_c, max_size, cap)
         
-        if not response.get("success", False):
-            raise RuntimeError(f"Failed to initialize cache: {response.get('error', 'unknown error')}")
+        if result == 0:
+            raise RuntimeError("Failed to initialize cache")
         
         return True
     
@@ -96,21 +107,21 @@ class SqliteCacheLibrary:
         freshness_c = freshness.encode('utf-8')
         bind_c = bind.encode('utf-8')
         
-        result_ptr = self.lib.Get(table_c, tenant_id_c, freshness_c, bind_c)
-        response = self._handle_response(result_ptr)
+        result_len = ctypes.c_int(0)
+        result_ptr = self.lib.Get(table_c, tenant_id_c, freshness_c, bind_c, ctypes.byref(result_len))
         
-        if response.get("success", False):
-            # Data is base64 encoded in JSON
-            import base64
-            data = response.get("data")
-            if data:
-                return base64.b64decode(data)
+        if not result_ptr or result_len.value == 0:
             return None
         
-        if "not found" in response.get("error", "").lower():
-            return None
-        
-        raise RuntimeError(f"Failed to get cache: {response.get('error', 'unknown error')}")
+        try:
+            # メモリからデータをコピーして取得
+            buffer = ctypes.create_string_buffer(result_len.value)
+            ctypes.memmove(buffer, result_ptr, result_len.value)
+            return buffer.raw
+        finally:
+            # Goで確保されたメモリを解放
+            if result_ptr:
+                self.lib.FreeMem(result_ptr)
     
     def set(self, table: str, tenant_id: str, freshness: str, bind: str, content: bytes) -> bool:
         """Set data in cache."""
@@ -126,11 +137,10 @@ class SqliteCacheLibrary:
         content_ptr = ctypes.c_char_p(content)
         content_len = len(content)
         
-        result_ptr = self.lib.Set(table_c, tenant_id_c, freshness_c, bind_c, content_ptr, content_len)
-        response = self._handle_response(result_ptr)
+        result = self.lib.Set(table_c, tenant_id_c, freshness_c, bind_c, content_ptr, content_len)
         
-        if not response.get("success", False):
-            raise RuntimeError(f"Failed to set cache: {response.get('error', 'unknown error')}")
+        if result == 0:
+            raise RuntimeError("Failed to set cache")
         
         return True
     
@@ -140,11 +150,10 @@ class SqliteCacheLibrary:
             raise RuntimeError("Library not loaded")
         
         table_c = table.encode('utf-8')
-        result_ptr = self.lib.Delete(table_c)
-        response = self._handle_response(result_ptr)
+        result = self.lib.Delete(table_c)
         
-        if not response.get("success", False):
-            raise RuntimeError(f"Failed to delete cache: {response.get('error', 'unknown error')}")
+        if result == 0:
+            raise RuntimeError("Failed to delete cache")
         
         return True
     
@@ -153,11 +162,10 @@ class SqliteCacheLibrary:
         if self.lib is None:
             raise RuntimeError("Library not loaded")
         
-        result_ptr = self.lib.Close()
-        response = self._handle_response(result_ptr)
+        result = self.lib.Close()
         
-        if not response.get("success", False):
-            raise RuntimeError(f"Failed to close cache: {response.get('error', 'unknown error')}")
+        if result == 0:
+            raise RuntimeError("Failed to close cache")
         
         return True
 

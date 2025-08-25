@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sqlite-cache/src/api"
+	"strconv"
 	"strings"
 )
 
@@ -36,36 +37,87 @@ func runCommandLine() {
 			continue
 		}
 
-		// JSONリクエストをパース
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) != 2 {
-			fmt.Fprintln(os.Stderr, `{"success": false, "error": "invalid format: expected 'COMMAND JSON'"}`)
+		// シンプルなテキストコマンドをパース
+		parts := strings.Fields(line)
+		if len(parts) == 0 {
+			fmt.Println("ERROR: empty command")
 			continue
 		}
 
-		command := parts[0]
-		jsonRequest := parts[1]
+		command := strings.ToUpper(parts[0])
+		var success bool
+		var result string
 
-		var response string
 		switch command {
 		case "INIT":
-			response = api.Init(jsonRequest)
-		case "GET":
-			response = api.Get(jsonRequest)
+			if len(parts) != 4 {
+				fmt.Println("ERROR: INIT requires 3 arguments: base_dir max_size cap")
+				continue
+			}
+			baseDir := parts[1]
+			maxSize, err1 := strconv.Atoi(parts[2])
+			cap, err2 := strconv.ParseFloat(parts[3], 64)
+			if err1 != nil || err2 != nil {
+				fmt.Println("ERROR: invalid number format")
+				continue
+			}
+			success = api.Init(baseDir, maxSize, cap)
+			result = "initialized"
+
 		case "SET":
-			response = api.Set(jsonRequest)
+			if len(parts) != 6 {
+				fmt.Println("ERROR: SET requires 5 arguments: table tenant_id freshness bind content")
+				continue
+			}
+			table, tenantId, freshness, bind, contentStr := parts[1], parts[2], parts[3], parts[4], parts[5]
+			content := []byte(contentStr)
+			success = api.Set(table, tenantId, freshness, bind, content)
+			result = "set"
+
+		case "GET":
+			if len(parts) != 5 {
+				fmt.Println("ERROR: GET requires 4 arguments: table tenant_id freshness bind")
+				continue
+			}
+			table, tenantId, freshness, bind := parts[1], parts[2], parts[3], parts[4]
+			content := api.Get(table, tenantId, freshness, bind)
+			if content != nil {
+				fmt.Printf("OK: %s\n", string(content))
+			} else {
+				fmt.Println("MISS: cache not found")
+			}
+			continue
+
 		case "DELETE":
-			response = api.Delete(jsonRequest)
+			if len(parts) != 2 {
+				fmt.Println("ERROR: DELETE requires 1 argument: table")
+				continue
+			}
+			table := parts[1]
+			success = api.Delete(table)
+			result = "deleted"
+
 		case "CLOSE":
-			response = api.Close()
+			success = api.Close()
+			result = "closed"
+			if success {
+				fmt.Printf("OK: %s\n", result)
+			} else {
+				fmt.Printf("ERROR: failed to %s\n", result)
+			}
+			break
+
 		default:
-			response = fmt.Sprintf(`{"success": false, "error": "unknown command: %s"}`, command)
+			fmt.Printf("ERROR: unknown command: %s\n", command)
+			continue
 		}
 
-		fmt.Println(response)
-
-		if command == "CLOSE" {
-			break
+		if command != "GET" {
+			if success {
+				fmt.Printf("OK: %s\n", result)
+			} else {
+				fmt.Printf("ERROR: failed to %s\n", result)
+			}
 		}
 	}
 
@@ -87,18 +139,26 @@ COMMANDS:
 
 INTERACTIVE MODE:
     Run without arguments to enter interactive mode.
-    Send commands in the format: COMMAND JSON_REQUEST
+    Send simple text commands:
 
     Available commands:
-    INIT    {"base_dir": "/path/to/cache", "max_size": 100, "cap": 0.8}
-    GET     {"table": "users", "tenant_id": "tenant1", "freshness": 1234567890, "bind": "key1"}
-    SET     {"table": "users", "tenant_id": "tenant1", "freshness": 1234567890, "bind": "key1", "content": "data"}
-    DELETE  {"table": "users"}
-    CLOSE   {}
+    INIT base_dir max_size cap
+    SET table tenant_id freshness bind content
+    GET table tenant_id freshness bind
+    DELETE table
+    CLOSE
+
+    Responses:
+    OK: <result>     - Success
+    ERROR: <reason>  - Failure
+    MISS: <reason>   - Cache miss
 
 EXAMPLES:
-    echo 'INIT {"base_dir": "./cache", "max_size": 100, "cap": 0.8}' | sqcache
-    echo 'GET {"table": "users", "tenant_id": "tenant1", "freshness": 1234567890, "bind": "user123"}' | sqcache
+    echo 'INIT ./cache 100 0.8' | sqcache
+    echo 'SET users tenant1 fresh1 user123 data' | sqcache
+    echo 'GET users tenant1 fresh1 user123' | sqcache
+    echo 'DELETE users' | sqcache
+    echo 'CLOSE' | sqcache
 `
 	fmt.Print(help)
 }

@@ -43,7 +43,8 @@ CREATE TABLE cache
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     bind          TEXT NOT NULL,
     content       BLOB NOT NULL,
-    last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 

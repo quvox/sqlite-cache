@@ -1,7 +1,7 @@
-.PHONY: build build-lib build-lib-mac build-lib-linux build-lib-linux-static build-linux-static clean test deps fmt vet print-version docker-build docker-build-centos7
+.PHONY: build build-lib build-lib-mac build-lib-linux-musl build-linux-musl clean test deps fmt vet print-version help
 
 # Variables
-VERSION?=0.2.2
+VERSION?=0.3.0
 BINARY_NAME=sqcache
 LIB_NAME=sqcachelib
 SRC_DIR=src
@@ -11,11 +11,8 @@ BUILD_DIR=build
 GO_FILES=$(shell find $(SRC_DIR) -name "*.go")
 LDFLAGS=-s -w -X main.Version=$(VERSION)
 
-# Default target (cross-platform builds excluded due to CGO complexity)
-all: build build-lib build-lib-mac build-lib-linux-static
-
-# Build all including cross-platform (may fail without proper cross-compilation setup)  
-all-cross: all build-lib-linux
+# Default target
+all: build build-lib build-lib-mac build-lib-linux-musl
 
 # Download dependencies
 deps:
@@ -45,10 +42,6 @@ build-static: deps fmt vet
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 go build -ldflags="$(LDFLAGS) -extldflags '-static'" -tags sqlite_omit_load_extension -o $(BUILD_DIR)/$(BINARY_NAME)-static $(SRC_DIR)/main.go $(SRC_DIR)/cmd.go
 
-# Cross-compile for Linux
-build-linux: deps fmt vet
-	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux $(SRC_DIR)/main.go $(SRC_DIR)/cmd.go
 
 # Build Mac shared library (requires macOS)
 build-lib-mac: deps fmt vet
@@ -59,32 +52,33 @@ build-lib-mac: deps fmt vet
 	fi
 	cd $(SRC_DIR) && GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build -buildmode=c-shared -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/mac/$(LIB_NAME).$(VERSION).so .
 
-# Build Linux shared library (requires Linux or cross-compilation environment)
-build-lib-linux: deps fmt vet
+# Build Linux binary with Zig CC and musl (no GLIBC dependency)
+build-linux-musl: deps fmt vet
 	@mkdir -p $(BUILD_DIR)/linux
-	@echo "Note: Linux cross-compilation from macOS requires proper CGO cross-compilation setup"
-	@echo "Consider building on a Linux machine or using Docker for Linux builds"
-	cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/linux/$(LIB_NAME).$(VERSION).so .
-
-# Build Linux shared library with static linking for better compatibility
-build-lib-linux-static: deps fmt vet
-	@mkdir -p $(BUILD_DIR)/linux
-	@echo "Building Linux shared library with static linking for GLIBC compatibility"
-	cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build \
-		-buildmode=c-shared \
-		-ldflags="$(LDFLAGS) -linkmode external -extldflags '-static-libgcc'" \
-		-tags 'sqlite_omit_load_extension netgo osusergo' \
-		-o ../$(BUILD_DIR)/linux/$(LIB_NAME).$(VERSION).so .
-
-# Build Linux binary with full static linking
-build-linux-static: deps fmt vet
-	@mkdir -p $(BUILD_DIR)/linux
-	@echo "Building Linux binary with full static linking"
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build \
+	@echo "Building Linux binary with Zig CC and musl"
+	@which zig > /dev/null || (echo "Error: zig not found. Please install Zig."; exit 1)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
+	CC="zig cc -target x86_64-linux-musl -D_LARGEFILE64_SOURCE=0 -DSQLITE_DISABLE_LFS" \
+	CXX="zig c++ -target x86_64-linux-musl -D_LARGEFILE64_SOURCE=0 -DSQLITE_DISABLE_LFS" \
+	go build \
 		-ldflags="$(LDFLAGS) -linkmode external -extldflags '-static'" \
-		-tags 'sqlite_omit_load_extension netgo osusergo' \
-		-o $(BUILD_DIR)/linux/$(BINARY_NAME)-static \
+		-tags 'sqlite_omit_load_extension netgo osusergo sqlite_disable_fts4_unicode' \
+		-o $(BUILD_DIR)/linux/$(BINARY_NAME) \
 		$(SRC_DIR)/main.go $(SRC_DIR)/cmd.go
+
+# Build Linux shared library with Zig CC and musl
+build-lib-linux-musl: deps fmt vet
+	@mkdir -p $(BUILD_DIR)/linux
+	@echo "Building Linux shared library with Zig CC and musl"
+	@which zig > /dev/null || (echo "Error: zig not found. Please install Zig."; exit 1)
+	cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
+	CC="zig cc -target x86_64-linux-musl -D_LARGEFILE64_SOURCE=0 -DSQLITE_DISABLE_LFS" \
+	CXX="zig c++ -target x86_64-linux-musl -D_LARGEFILE64_SOURCE=0 -DSQLITE_DISABLE_LFS" \
+	go build \
+		-buildmode=c-shared \
+		-ldflags="$(LDFLAGS) -linkmode external -extldflags '-static'" \
+		-tags 'sqlite_omit_load_extension netgo osusergo sqlite_disable_fts4_unicode' \
+		-o ../$(BUILD_DIR)/linux/$(LIB_NAME).$(VERSION).so .
 
 # Run Python tests
 test: build-lib
@@ -121,34 +115,24 @@ dev:
 	@which air > /dev/null || go install github.com/cosmtrek/air@latest
 	air
 
-# Docker build for CentOS 7 (GLIBC 2.17 compatibility)
-docker-build-centos7:
-	@echo "Building with CentOS 7 for GLIBC 2.17 compatibility"
-	docker build -f Dockerfile.centos7 -t $(BINARY_NAME)-centos7 .
-	docker run --rm -v $(PWD)/build:/app/build $(BINARY_NAME)-centos7 /bin/bash -c "cp -r /app/build/linux/* /app/build/"
 
 # Show help
 help:
 	@echo "Available targets:"
 	@echo "  all              - Build binary and shared libraries (default)"
-	@echo "  all-cross        - Build all including cross-platform (requires setup)"
-	@echo "  deps             - Download and tidy dependencies"
-	@echo "  fmt              - Format Go code"
-	@echo "  vet              - Run go vet"
-	@echo "  build            - Build the command-line binary"
+	@echo "  deps                    - Download and tidy dependencies"
+	@echo "  fmt                     - Format Go code"
+	@echo "  vet                     - Run go vet"
+	@echo "  build                   - Build the command-line binary"
 	@echo "  build-lib               - Build the shared library (.so)"
 	@echo "  build-lib-mac           - Build shared library for Mac (macOS only)"
-	@echo "  build-lib-linux         - Build shared library for Linux (requires setup)"
-	@echo "  build-lib-linux-static  - Build Linux shared library with static linking"
-	@echo "  build-static            - Build binary with static linking"
-	@echo "  build-linux             - Cross-compile binary for Linux"
-	@echo "  build-linux-static      - Build Linux binary with full static linking"
-	@echo "  test             - Run tests"
-	@echo "  clean            - Clean build artifacts"
-	@echo "  run              - Build and run the binary"
-	@echo "  install             - Install binary to GOPATH/bin"
-	@echo "  dev                 - Development mode with auto-reload"
-	@echo "  docker-build-centos7 - Build with CentOS 7 for GLIBC 2.17 compatibility"
+	@echo "  build-lib-linux-musl    - Build Linux shared library with Zig CC and musl"
+	@echo "  build-linux-musl        - Build Linux binary with Zig CC and musl"
+	@echo "  test                    - Run tests"
+	@echo "  clean                   - Clean build artifacts"
+	@echo "  run                     - Build and run the binary"
+	@echo "  install                 - Install binary to GOPATH/bin"
+	@echo "  dev                     - Development mode with auto-reload"
 	@echo "  help                - Show this help message"
 	@echo ""
 	@echo "Environment variables:"
