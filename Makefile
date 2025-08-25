@@ -1,7 +1,7 @@
-.PHONY: build build-lib build-lib-mac build-lib-linux clean test deps fmt vet print-version
+.PHONY: build build-lib build-lib-mac build-lib-linux build-lib-linux-static build-linux-static clean test deps fmt vet print-version docker-build docker-build-centos7
 
 # Variables
-VERSION?=0.2.1
+VERSION?=0.2.2
 BINARY_NAME=sqcache
 LIB_NAME=sqcachelib
 SRC_DIR=src
@@ -12,7 +12,7 @@ GO_FILES=$(shell find $(SRC_DIR) -name "*.go")
 LDFLAGS=-s -w -X main.Version=$(VERSION)
 
 # Default target (cross-platform builds excluded due to CGO complexity)
-all: build build-lib build-lib-mac build-lib-linux
+all: build build-lib build-lib-mac build-lib-linux-static
 
 # Build all including cross-platform (may fail without proper cross-compilation setup)  
 all-cross: all build-lib-linux
@@ -66,6 +66,26 @@ build-lib-linux: deps fmt vet
 	@echo "Consider building on a Linux machine or using Docker for Linux builds"
 	cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/linux/$(LIB_NAME).$(VERSION).so .
 
+# Build Linux shared library with static linking for better compatibility
+build-lib-linux-static: deps fmt vet
+	@mkdir -p $(BUILD_DIR)/linux
+	@echo "Building Linux shared library with static linking for GLIBC compatibility"
+	cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build \
+		-buildmode=c-shared \
+		-ldflags="$(LDFLAGS) -linkmode external -extldflags '-static-libgcc'" \
+		-tags 'sqlite_omit_load_extension netgo osusergo' \
+		-o ../$(BUILD_DIR)/linux/$(LIB_NAME).$(VERSION).so .
+
+# Build Linux binary with full static linking
+build-linux-static: deps fmt vet
+	@mkdir -p $(BUILD_DIR)/linux
+	@echo "Building Linux binary with full static linking"
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build \
+		-ldflags="$(LDFLAGS) -linkmode external -extldflags '-static'" \
+		-tags 'sqlite_omit_load_extension netgo osusergo' \
+		-o $(BUILD_DIR)/linux/$(BINARY_NAME)-static \
+		$(SRC_DIR)/main.go $(SRC_DIR)/cmd.go
+
 # Run Python tests
 test: build-lib
 	@echo "Running Python integration tests..."
@@ -101,9 +121,11 @@ dev:
 	@which air > /dev/null || go install github.com/cosmtrek/air@latest
 	air
 
-# Docker build
-docker-build:
-	docker build -t $(BINARY_NAME) .
+# Docker build for CentOS 7 (GLIBC 2.17 compatibility)
+docker-build-centos7:
+	@echo "Building with CentOS 7 for GLIBC 2.17 compatibility"
+	docker build -f Dockerfile.centos7 -t $(BINARY_NAME)-centos7 .
+	docker run --rm -v $(PWD)/build:/app/build $(BINARY_NAME)-centos7 /bin/bash -c "cp -r /app/build/linux/* /app/build/"
 
 # Show help
 help:
@@ -114,18 +136,20 @@ help:
 	@echo "  fmt              - Format Go code"
 	@echo "  vet              - Run go vet"
 	@echo "  build            - Build the command-line binary"
-	@echo "  build-lib        - Build the shared library (.so)"
-	@echo "  build-lib-mac    - Build shared library for Mac (macOS only)"
-	@echo "  build-lib-linux  - Build shared library for Linux (requires setup)"
-	@echo "  build-static     - Build binary with static linking"
-	@echo "  build-linux      - Cross-compile binary for Linux"
+	@echo "  build-lib               - Build the shared library (.so)"
+	@echo "  build-lib-mac           - Build shared library for Mac (macOS only)"
+	@echo "  build-lib-linux         - Build shared library for Linux (requires setup)"
+	@echo "  build-lib-linux-static  - Build Linux shared library with static linking"
+	@echo "  build-static            - Build binary with static linking"
+	@echo "  build-linux             - Cross-compile binary for Linux"
+	@echo "  build-linux-static      - Build Linux binary with full static linking"
 	@echo "  test             - Run tests"
 	@echo "  clean            - Clean build artifacts"
 	@echo "  run              - Build and run the binary"
-	@echo "  install          - Install binary to GOPATH/bin"
-	@echo "  dev              - Development mode with auto-reload"
-	@echo "  docker-build     - Build Docker image"
-	@echo "  help             - Show this help message"
+	@echo "  install             - Install binary to GOPATH/bin"
+	@echo "  dev                 - Development mode with auto-reload"
+	@echo "  docker-build-centos7 - Build with CentOS 7 for GLIBC 2.17 compatibility"
+	@echo "  help                - Show this help message"
 	@echo ""
 	@echo "Environment variables:"
 	@echo "  VERSION          - Set version string (default: 0.1.0)"
