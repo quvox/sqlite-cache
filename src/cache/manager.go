@@ -33,6 +33,9 @@ func (cm *CacheManager) Init(baseDir string, maxSize int, cap float64) error {
 
 	// ベースディレクトリを作成
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		if isNoSpaceError(err) {
+			return fmt.Errorf("disk full error while creating base directory: %w", err)
+		}
 		return fmt.Errorf("failed to create base directory: %w", err)
 	}
 
@@ -58,11 +61,17 @@ func (cm *CacheManager) openDB(table, tenantID string, freshness string) (*sql.D
 
 	// ディレクトリを作成
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		if isNoSpaceError(err) {
+			return nil, fmt.Errorf("disk full error while creating directory: %w", err)
+		}
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
+		if isNoSpaceError(err) {
+			return nil, fmt.Errorf("disk full error while opening database: %w", err)
+		}
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
@@ -90,6 +99,9 @@ func (cm *CacheManager) configurePragmas(db *sql.DB) error {
 
 	for _, pragma := range pragmas {
 		if _, err := db.Exec(pragma); err != nil {
+			if isNoSpaceError(err) {
+				return fmt.Errorf("disk full error during pragma execution '%s': %w", pragma, err)
+			}
 			return fmt.Errorf("failed to execute pragma '%s': %w", pragma, err)
 		}
 	}
@@ -110,6 +122,9 @@ func (cm *CacheManager) createTables(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_last_accessed ON cache (last_accessed);
 	`
 	_, err := db.Exec(query)
+	if err != nil && isNoSpaceError(err) {
+		return fmt.Errorf("disk full error during table creation: %w", err)
+	}
 	return err
 }
 
@@ -166,4 +181,15 @@ func (cm *CacheManager) Close() error {
 	}
 	cm.dbs = make(map[string]*sql.DB)
 	return nil
+}
+
+// isNoSpaceError checks if the error is related to disk space issues
+func isNoSpaceError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "no space left on device") ||
+		strings.Contains(errStr, "disk full") ||
+		strings.Contains(errStr, "not enough space")
 }

@@ -61,7 +61,8 @@ func runCommandLine() {
 				fmt.Println("ERROR: invalid number format")
 				continue
 			}
-			success = api.Init(baseDir, maxSize, cap)
+			err := api.Init(baseDir, maxSize, cap)
+			success = (err == nil)
 			result = "initialized"
 
 		case "SET":
@@ -71,7 +72,8 @@ func runCommandLine() {
 			}
 			table, tenantId, freshness, bind, contentStr := parts[1], parts[2], parts[3], parts[4], parts[5]
 			content := []byte(contentStr)
-			success = api.Set(table, tenantId, freshness, bind, content)
+			err := api.Set(table, tenantId, freshness, bind, content)
+			success = (err == nil)
 			result = "set"
 
 		case "GET":
@@ -80,8 +82,10 @@ func runCommandLine() {
 				continue
 			}
 			table, tenantId, freshness, bind := parts[1], parts[2], parts[3], parts[4]
-			content := api.Get(table, tenantId, freshness, bind)
-			if content != nil {
+			content, err := api.Get(table, tenantId, freshness, bind)
+			if err != nil {
+				fmt.Printf("ERROR: %s\n", err.Error())
+			} else if content != nil {
 				fmt.Printf("OK: %s\n", string(content))
 			} else {
 				fmt.Println("MISS: cache not found")
@@ -94,11 +98,13 @@ func runCommandLine() {
 				continue
 			}
 			table := parts[1]
-			success = api.Delete(table)
+			err := api.Delete(table)
+			success = (err == nil)
 			result = "deleted"
 
 		case "CLOSE":
-			success = api.Close()
+			err := api.Close()
+			success = (err == nil)
 			result = "closed"
 			if success {
 				fmt.Printf("OK: %s\n", result)

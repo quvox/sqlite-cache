@@ -83,8 +83,17 @@ make test           # 全てのサンプルコードの実行テスト
 
 **クロスプラットフォームビルド（Linux用）:**
 ```bash
-make build-linux-musl     # musl libc使用のLinux用ビルド
-make build-lib-linux-musl # musl libc使用のLinux用ライブラリビルド
+make build-linux-musl          # Zig CC使用のLinux x86_64用ビルド
+make build-lib-linux-musl      # Zig CC使用のLinux x86_64用ライブラリビルド
+make build-lib-linux-arm64-musl # Zig CC使用のLinux ARM64用ライブラリビルド
+make build-lib-linux-all       # 両方のLinuxアーキテクチャを一度にビルド
+```
+
+**AWS Lambda用ビルド（Amazon Linux 2）:**
+```bash
+make build-lib-lambda          # Amazon Linux 2 Docker内でx86_64用ライブラリビルド
+make build-lib-lambda-arm64    # Amazon Linux 2 Docker内でARM64用ライブラリビルド
+make build-lib-lambda-all      # 両方のLambdaアーキテクチャを一度にビルド
 ```
 
 ### go mod

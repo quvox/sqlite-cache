@@ -11,6 +11,14 @@ import json
 import os
 from typing import Optional
 
+# Error codes matching library.go
+SUCCESS = 1
+ERROR_GENERAL = 0
+ERROR_DISK_FULL = -1
+ERROR_INVALID_ARG = -2
+ERROR_NOT_FOUND = -3
+ERROR_NOT_INIT = -4
+
 
 # Global library handle
 _lib = None
@@ -23,8 +31,20 @@ def load_library(library_path: str = None):
     if library_path is None:
         # Get version from environment variable, default to 0.3.0
         version = os.environ.get('VERSION', '0.3.0')
-        # Try both project root and examples directory
-        paths = [f"./build/sqcachelib.{version}.so", f"../build/sqcachelib.{version}.so"]
+        # Try various paths: project root, examples directory, Linux build, Lambda build, and Lambda environment
+        paths = [
+            f"./build/sqcachelib.{version}.so", 
+            f"../build/sqcachelib.{version}.so",
+            f"./build/linux/sqcachelib.{version}.so",
+            f"../build/linux/sqcachelib.{version}.so",
+            f"./build/linux/sqcachelib.{version}.arm64.so",
+            f"../build/linux/sqcachelib.{version}.arm64.so",
+            f"./build/lambda/sqcachelib.{version}.so",
+            f"../build/lambda/sqcachelib.{version}.so",
+            f"./build/lambda/sqcachelib.{version}.arm64.so",
+            f"../build/lambda/sqcachelib.{version}.arm64.so",
+            f"/var/task/sqcachelib.{version}.so"
+        ]
         library_path = None
         for p in paths:
             if os.path.exists(p):
@@ -36,7 +56,49 @@ def load_library(library_path: str = None):
     if not os.path.exists(library_path):
         raise FileNotFoundError(f"Library not found: {library_path}")
     
-    _lib = ctypes.CDLL(library_path)
+    print(f"Trying to load library: {library_path}")
+    try:
+        _lib = ctypes.CDLL(library_path)
+        print(f"Successfully loaded: {library_path}")
+    except Exception as e:
+        print(f"Failed to load library: {e}")
+        # Try to get more diagnostic information
+        import platform
+        print(f"Platform: {platform.platform()}")
+        print(f"Architecture: {platform.machine()}")
+        print(f"Python version: {platform.python_version()}")
+        
+        # Try different loading strategies for Amazon Linux 2 compatibility
+        loading_strategies = [
+            ("RTLD_LAZY", lambda: ctypes.CDLL(library_path, mode=ctypes.RTLD_LAZY)),
+            ("RTLD_NOW", lambda: ctypes.CDLL(library_path, mode=ctypes.RTLD_NOW)),
+            ("RTLD_GLOBAL", lambda: ctypes.CDLL(library_path, mode=ctypes.RTLD_GLOBAL)),
+        ]
+        
+        for strategy_name, loader in loading_strategies:
+            try:
+                print(f"Attempting to load with {strategy_name} mode...")
+                _lib = loader()
+                print(f"Success with {strategy_name} mode!")
+                break
+            except Exception as e2:
+                print(f"{strategy_name} also failed: {e2}")
+        else:
+            # If all strategies fail, try to provide helpful error information
+            import subprocess
+            try:
+                ldd_output = subprocess.check_output(["ldd", library_path], stderr=subprocess.STDOUT, text=True)
+                print(f"Library dependencies (ldd):\\n{ldd_output}")
+            except Exception:
+                print("Could not run 'ldd' to check dependencies")
+            
+            try:
+                objdump_output = subprocess.check_output(["objdump", "-p", library_path], stderr=subprocess.STDOUT, text=True)
+                print(f"Library info (objdump):\\n{objdump_output[:1000]}...")  # Truncate output
+            except Exception:
+                print("Could not run 'objdump' to check library info")
+            
+            raise RuntimeError(f"Cannot load library {library_path}: {e}") from e
     
     # Configure function signatures
     # Init(char* baseDir, int maxSize, double cap) -> int
@@ -56,20 +118,6 @@ def load_library(library_path: str = None):
     _lib.Set.restype = ctypes.c_int
 
 
-def _handle_response(result_ptr):
-    """Handle the response from a library function call."""
-    if not result_ptr:
-        raise RuntimeError("No response from library function")
-    
-    # Convert C string to Python string
-    result_str = ctypes.string_at(result_ptr).decode('utf-8')
-    
-    try:
-        return json.loads(result_str)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Invalid JSON response: {result_str}") from e
-
-
 def init(base_dir: str, max_size: int, cap: float = 0.8) -> bool:
     """Initialize the cache system."""
     if _lib is None:
@@ -78,8 +126,12 @@ def init(base_dir: str, max_size: int, cap: float = 0.8) -> bool:
     base_dir_c = base_dir.encode('utf-8')
     result = _lib.Init(base_dir_c, max_size, cap)
     
-    if result == 0:
-        raise RuntimeError("Failed to initialize cache")
+    if result == ERROR_DISK_FULL:
+        raise RuntimeError("Disk full - cannot initialize cache")
+    elif result == ERROR_INVALID_ARG:
+        raise ValueError("Invalid argument provided to init")
+    elif result != SUCCESS:
+        raise RuntimeError(f"Failed to initialize cache (error code: {result})")
     
     return True
 
@@ -96,6 +148,18 @@ def get(table: str, tenant_id: str, freshness: str, bind: str) -> Optional[bytes
     
     result_len = ctypes.c_int(0)
     result_ptr = _lib.Get(table_c, tenant_id_c, freshness_c, bind_c, ctypes.byref(result_len))
+    
+    # Check for error codes in result_len
+    if result_len.value == ERROR_DISK_FULL:
+        raise RuntimeError("Disk full error during cache get")
+    elif result_len.value == ERROR_INVALID_ARG:
+        raise ValueError("Invalid argument provided to get")
+    elif result_len.value == ERROR_NOT_INIT:
+        raise RuntimeError("Cache not initialized")
+    elif result_len.value == ERROR_NOT_FOUND:
+        return None  # Cache miss
+    elif result_len.value < 0:
+        raise RuntimeError(f"Cache get failed (error code: {result_len.value})")
     
     if not result_ptr or result_len.value == 0:
         return None
@@ -127,8 +191,14 @@ def set(table: str, tenant_id: str, freshness: str, bind: str, content: bytes) -
     
     result = _lib.Set(table_c, tenant_id_c, freshness_c, bind_c, content_ptr, content_len)
     
-    if result == 0:
-        raise RuntimeError("Failed to set cache")
+    if result == ERROR_DISK_FULL:
+        raise RuntimeError("Disk full - cannot set cache")
+    elif result == ERROR_INVALID_ARG:
+        raise ValueError("Invalid argument provided to set")
+    elif result == ERROR_NOT_INIT:
+        raise RuntimeError("Cache not initialized")
+    elif result != SUCCESS:
+        raise RuntimeError(f"Failed to set cache (error code: {result})")
     
     return True
 
@@ -194,8 +264,22 @@ def main():
         print("Cache operations completed successfully!")
         return 0
         
+    except RuntimeError as e:
+        if "disk full" in str(e).lower():
+            print(f"DISK FULL ERROR: {e}")
+            print("Please free up disk space and try again.")
+        elif "not initialized" in str(e).lower():
+            print(f"INITIALIZATION ERROR: {e}")
+            print("Make sure to call init() before other operations.")
+        else:
+            print(f"RUNTIME ERROR: {e}")
+        return 1
+    except ValueError as e:
+        print(f"INVALID ARGUMENT ERROR: {e}")
+        print("Please check your function arguments.")
+        return 1
     except Exception as e:
-        print(f"Error during cache operations: {e}")
+        print(f"UNEXPECTED ERROR: {e}")
         return 1
 
 

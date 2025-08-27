@@ -1,7 +1,7 @@
 .PHONY: build build-lib build-lib-mac build-lib-linux-musl build-linux-musl clean test deps fmt vet print-version help
 
 # Variables
-VERSION?=0.3.0
+VERSION?=0.4.0
 BINARY_NAME=sqcache
 LIB_NAME=sqcachelib
 SRC_DIR=src
@@ -12,7 +12,7 @@ GO_FILES=$(shell find $(SRC_DIR) -name "*.go")
 LDFLAGS=-s -w -X main.Version=$(VERSION)
 
 # Default target
-all: build build-lib build-lib-mac build-lib-linux-musl
+all: build build-lib build-lib-mac build-lib-linux-all
 
 # Download dependencies
 deps:
@@ -72,13 +72,89 @@ build-lib-linux-musl: deps fmt vet
 	@echo "Building Linux shared library with Zig CC and musl"
 	@which zig > /dev/null || (echo "Error: zig not found. Please install Zig."; exit 1)
 	cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
-	CC="zig cc -target x86_64-linux-musl -D_LARGEFILE64_SOURCE=0 -DSQLITE_DISABLE_LFS" \
-	CXX="zig c++ -target x86_64-linux-musl -D_LARGEFILE64_SOURCE=0 -DSQLITE_DISABLE_LFS" \
+	CC="zig cc -target x86_64-linux-gnu" \
+	CXX="zig c++ -target x86_64-linux-gnu" \
 	go build \
 		-buildmode=c-shared \
-		-ldflags="$(LDFLAGS) -linkmode external -extldflags '-static'" \
-		-tags 'sqlite_omit_load_extension netgo osusergo sqlite_disable_fts4_unicode' \
+		-ldflags="$(LDFLAGS)" \
+		-tags 'sqlite_omit_load_extension' \
 		-o ../$(BUILD_DIR)/linux/$(LIB_NAME).$(VERSION).so .
+
+# Build Linux ARM64 shared library with Zig CC and musl
+build-lib-linux-arm64-musl: deps fmt vet
+	@mkdir -p $(BUILD_DIR)/linux
+	@echo "Building Linux ARM64 shared library with Zig CC and musl"
+	@which zig > /dev/null || (echo "Error: zig not found. Please install Zig."; exit 1)
+	cd $(SRC_DIR) && GOOS=linux GOARCH=arm64 CGO_ENABLED=1 \
+	CC="zig cc -target aarch64-linux-gnu" \
+	CXX="zig c++ -target aarch64-linux-gnu" \
+	go build \
+		-buildmode=c-shared \
+		-ldflags="$(LDFLAGS)" \
+		-tags 'sqlite_omit_load_extension' \
+		-o ../$(BUILD_DIR)/linux/$(LIB_NAME).$(VERSION).arm64.so .
+
+# Build both Linux architectures
+build-lib-linux-all: build-lib-linux-musl build-lib-linux-arm64-musl
+
+# Build in Amazon Linux 2 Docker container for Lambda compatibility
+build-lib-lambda: deps fmt vet
+	@echo "Building shared library in Amazon Linux 2 Docker container for Lambda"
+	@mkdir -p $(BUILD_DIR)/lambda
+	docker run --rm --platform=linux/amd64 \
+		-v $(PWD):/workspace \
+		-w /workspace \
+		amazonlinux:2 \
+		bash -c '\
+			yum update -y && \
+			yum install -y gcc git wget tar && \
+			if [ ! -f go1.23.4.linux-amd64.tar.gz ]; then \
+				wget -q https://go.dev/dl/go1.23.4.linux-amd64.tar.gz; \
+			fi && \
+			tar -C /usr/local -xzf go1.23.4.linux-amd64.tar.gz && \
+			export PATH=/usr/local/go/bin:$$PATH && \
+			export CGO_ENABLED=1 && \
+			export GOOS=linux && \
+			export GOARCH=amd64 && \
+			cd src && \
+			go mod download && \
+			go build \
+				-buildmode=c-shared \
+				-ldflags="$(LDFLAGS)" \
+				-tags "sqlite_omit_load_extension" \
+				-o ../$(BUILD_DIR)/lambda/$(LIB_NAME).$(VERSION).so . \
+		'
+
+# Build Lambda ARM64 version
+build-lib-lambda-arm64: deps fmt vet
+	@echo "Building ARM64 shared library in Amazon Linux 2 Docker container for Lambda"
+	@mkdir -p $(BUILD_DIR)/lambda
+	docker run --rm --platform=linux/arm64 \
+		-v $(PWD):/workspace \
+		-w /workspace \
+		amazonlinux:2 \
+		bash -c '\
+			yum update -y && \
+			yum install -y gcc git wget tar && \
+			if [ ! -f go1.23.4.linux-arm64.tar.gz ]; then \
+				wget -q https://go.dev/dl/go1.23.4.linux-arm64.tar.gz; \
+			fi && \
+			tar -C /usr/local -xzf go1.23.4.linux-arm64.tar.gz && \
+			export PATH=/usr/local/go/bin:$$PATH && \
+			export CGO_ENABLED=1 && \
+			export GOOS=linux && \
+			export GOARCH=arm64 && \
+			cd src && \
+			go mod download && \
+			go build \
+				-buildmode=c-shared \
+				-ldflags="$(LDFLAGS)" \
+				-tags "sqlite_omit_load_extension" \
+				-o ../$(BUILD_DIR)/lambda/$(LIB_NAME).$(VERSION).arm64.so . \
+		'
+
+# Build both Lambda architectures
+build-lib-lambda-all: build-lib-lambda build-lib-lambda-arm64
 
 # Run Python tests
 test: build-lib
