@@ -11,6 +11,14 @@ import json
 import os
 from typing import Optional
 
+# Error codes matching library.go
+SUCCESS = 1
+ERROR_GENERAL = 0
+ERROR_DISK_FULL = -1
+ERROR_INVALID_ARG = -2
+ERROR_NOT_FOUND = -3
+ERROR_NOT_INIT = -4
+
 
 # Global library handle
 _lib = None
@@ -118,8 +126,12 @@ def init(base_dir: str, max_size: int, cap: float = 0.8) -> bool:
     base_dir_c = base_dir.encode('utf-8')
     result = _lib.Init(base_dir_c, max_size, cap)
     
-    if result == 0:
-        raise RuntimeError("Failed to initialize cache")
+    if result == ERROR_DISK_FULL:
+        raise RuntimeError("Disk full - cannot initialize cache")
+    elif result == ERROR_INVALID_ARG:
+        raise ValueError("Invalid argument provided to init")
+    elif result != SUCCESS:
+        raise RuntimeError(f"Failed to initialize cache (error code: {result})")
     
     return True
 
@@ -136,6 +148,18 @@ def get(table: str, tenant_id: str, freshness: str, bind: str) -> Optional[bytes
     
     result_len = ctypes.c_int(0)
     result_ptr = _lib.Get(table_c, tenant_id_c, freshness_c, bind_c, ctypes.byref(result_len))
+    
+    # Check for error codes in result_len
+    if result_len.value == ERROR_DISK_FULL:
+        raise RuntimeError("Disk full error during cache get")
+    elif result_len.value == ERROR_INVALID_ARG:
+        raise ValueError("Invalid argument provided to get")
+    elif result_len.value == ERROR_NOT_INIT:
+        raise RuntimeError("Cache not initialized")
+    elif result_len.value == ERROR_NOT_FOUND:
+        return None  # Cache miss
+    elif result_len.value < 0:
+        raise RuntimeError(f"Cache get failed (error code: {result_len.value})")
     
     if not result_ptr or result_len.value == 0:
         return None
@@ -167,8 +191,14 @@ def set(table: str, tenant_id: str, freshness: str, bind: str, content: bytes) -
     
     result = _lib.Set(table_c, tenant_id_c, freshness_c, bind_c, content_ptr, content_len)
     
-    if result == 0:
-        raise RuntimeError("Failed to set cache")
+    if result == ERROR_DISK_FULL:
+        raise RuntimeError("Disk full - cannot set cache")
+    elif result == ERROR_INVALID_ARG:
+        raise ValueError("Invalid argument provided to set")
+    elif result == ERROR_NOT_INIT:
+        raise RuntimeError("Cache not initialized")
+    elif result != SUCCESS:
+        raise RuntimeError(f"Failed to set cache (error code: {result})")
     
     return True
 
@@ -234,8 +264,22 @@ def main():
         print("Cache operations completed successfully!")
         return 0
         
+    except RuntimeError as e:
+        if "disk full" in str(e).lower():
+            print(f"DISK FULL ERROR: {e}")
+            print("Please free up disk space and try again.")
+        elif "not initialized" in str(e).lower():
+            print(f"INITIALIZATION ERROR: {e}")
+            print("Make sure to call init() before other operations.")
+        else:
+            print(f"RUNTIME ERROR: {e}")
+        return 1
+    except ValueError as e:
+        print(f"INVALID ARGUMENT ERROR: {e}")
+        print("Please check your function arguments.")
+        return 1
     except Exception as e:
-        print(f"Error during cache operations: {e}")
+        print(f"UNEXPECTED ERROR: {e}")
         return 1
 
 
