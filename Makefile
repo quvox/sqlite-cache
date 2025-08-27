@@ -121,6 +121,7 @@ build-lib-lambda: deps fmt vet
 			go build \
 				-buildmode=c-shared \
 				-ldflags="$(LDFLAGS)" \
+				-buildvcs=false \
 				-tags "sqlite_omit_load_extension" \
 				-o ../$(BUILD_DIR)/lambda/$(LIB_NAME).$(VERSION).so . \
 		'
@@ -149,6 +150,7 @@ build-lib-lambda-arm64: deps fmt vet
 			go build \
 				-buildmode=c-shared \
 				-ldflags="$(LDFLAGS)" \
+				-buildvcs=false \
 				-tags "sqlite_omit_load_extension" \
 				-o ../$(BUILD_DIR)/lambda/$(LIB_NAME).$(VERSION).arm64.so . \
 		'
