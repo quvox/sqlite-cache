@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,9 @@ func (cm *CacheManager) Get(table, tenantID string, freshness string, bind strin
 
 	db, err := cm.openDB(table, tenantID, freshness)
 	if err != nil {
+		if isDiskFullError(err) {
+			return nil, fmt.Errorf("disk full error: %w", err)
+		}
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
@@ -37,6 +41,9 @@ func (cm *CacheManager) Get(table, tenantID string, freshness string, bind strin
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("cache entry not found")
+		}
+		if isDiskFullError(err) {
+			return nil, fmt.Errorf("disk full error during cache update: %w", err)
 		}
 		return nil, fmt.Errorf("failed to update and query cache: %w", err)
 	}
@@ -59,6 +66,9 @@ func (cm *CacheManager) Set(table, tenantID string, freshness string, bind strin
 
 	db, err := cm.openDB(table, tenantID, freshness)
 	if err != nil {
+		if isDiskFullError(err) {
+			return fmt.Errorf("disk full error: %w", err)
+		}
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 
@@ -76,6 +86,9 @@ func (cm *CacheManager) Set(table, tenantID string, freshness string, bind strin
 	`
 	_, err = db.Exec(query, bind, content, now, now)
 	if err != nil {
+		if isDiskFullError(err) {
+			return fmt.Errorf("disk full error during cache insert: %w", err)
+		}
 		return fmt.Errorf("failed to insert cache entry: %w", err)
 	}
 
@@ -153,5 +166,21 @@ func (cm *CacheManager) lruCleanup(db *sql.DB) error {
 
 	// VACUUMでデータベースを最適化
 	_, err = db.Exec("VACUUM")
+	if err != nil && isDiskFullError(err) {
+		return fmt.Errorf("disk full error during vacuum: %w", err)
+	}
 	return err
+}
+
+// isDiskFullError checks if the error is related to disk space issues
+func isDiskFullError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "disk full") ||
+		strings.Contains(errStr, "no space left on device") ||
+		strings.Contains(errStr, "database or disk is full") ||
+		strings.Contains(errStr, "sqlite_full") ||
+		strings.Contains(errStr, "database disk image is malformed")
 }

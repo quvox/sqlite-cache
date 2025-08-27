@@ -1,7 +1,7 @@
 .PHONY: build build-lib build-lib-mac build-lib-linux-musl build-linux-musl clean test deps fmt vet print-version help
 
 # Variables
-VERSION?=0.3.0
+VERSION?=0.4.0
 BINARY_NAME=sqcache
 LIB_NAME=sqcachelib
 SRC_DIR=src
